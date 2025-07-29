@@ -1,4 +1,5 @@
-use std::{collections::VecDeque, io::Cursor, sync::{Arc, Mutex}, thread};
+use std::{collections::VecDeque, io::{Cursor, Write}, sync::{Arc, Mutex}, thread};
+use crossterm::{event::{self, Event, KeyCode}, terminal::{disable_raw_mode, enable_raw_mode}};
 use hound::WavReader;
 use jack::*;
 use log::{info, warn};
@@ -58,7 +59,6 @@ fn transcribe(config: Arc<Config>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec
     let resampled = resample(samples, 48000, 16000).unwrap();
 
     // Whisper parameters
-    // TODO: Make configurable
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_language(config.whisper.language.as_deref());
     params.set_translate(config.whisper.translate);
@@ -133,7 +133,13 @@ fn translate_and_play(config: Arc<Config>, play_buffer: Arc<Mutex<VecDeque<f32>>
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialise logger
-    env_logger::Builder::new().filter_level(log::LevelFilter::Info).init();
+    // Custom format to force newlines, allowing raw mode so keys can be retrieved without pressing enter
+    // TODO: Find another solution to this without replacing the format
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .format(|buf, record| {
+            writeln!(buf, "\r\n[{}] {}", record.level(), record.args())
+        }).init();
 
     // Load configuration file
     // TODO: Make tool for creating config if one isnt found
@@ -264,9 +270,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the client
     let active_client = client.activate_async((), process).unwrap();
 
-    // Loop forever
-    // TODO: Make a more elegant solution
-    loop {}
+    info!("Quit by pressing Q");
+
+    // Get key events instantly without line buffering
+    enable_raw_mode().unwrap();
+
+    // Keep running until Q is pressed
+    loop {
+        if let Event::Key(key_event) = event::read().unwrap() {
+            if key_event.code == KeyCode::Char('q') {
+                break;
+            }
+        }
+    }
+
+    disable_raw_mode().unwrap();
 
     // Stop jack client
     // Unreachable with current solution
