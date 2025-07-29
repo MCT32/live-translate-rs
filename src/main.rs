@@ -1,7 +1,20 @@
-use std::{collections::VecDeque, io::Cursor, sync::{Arc, Mutex}, thread};
+use std::{collections::VecDeque, io::{Cursor, Read}, sync::{Arc, Mutex}, thread};
 use hound::WavReader;
 use jack::*;
+use serde::Deserialize;
 use whisper_rs::{DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+// Configuration struct
+#[derive(Deserialize, Debug)]
+struct Config {
+    audio: AudioConfig,
+}
+
+#[derive(Deserialize, Debug)]
+struct AudioConfig {
+    input_port: String,
+    output_ports: Vec<String>,
+}
 
 // Calculate RMS from samples
 fn rms(buf: &[f32]) -> f32 {
@@ -103,6 +116,13 @@ fn translate_and_play(play_buffer: Arc<Mutex<VecDeque<f32>>>, ctx: Arc<Mutex<Whi
 }
 
 fn main() {
+    // Load configuration file
+    // TODO: Make tool for creating config if one isnt found
+    let config = std::fs::read_to_string("config.toml").expect("Unable to read config file!");
+
+    // Parse TOML
+    let config: Config = toml::from_str(&config).expect("Couldn't parse config file!");
+
     // Load whisper
     // TODO: Handle downloading models
     // TODO: Make model configurable
@@ -121,14 +141,14 @@ fn main() {
     let mut out_port = client.register_port("output_MONO", AudioOut::default()).unwrap();
     // Connect output
     // TODO: Handle missing ports
-    client.connect_ports_by_name(out_port.name().unwrap().as_str(), "PCM2902 Audio Codec Analog Stereo:playback_FL").unwrap();
-    client.connect_ports_by_name(out_port.name().unwrap().as_str(), "PCM2902 Audio Codec Analog Stereo:playback_FR").unwrap();
-    client.connect_ports_by_name(out_port.name().unwrap().as_str(), "WEBRTC VoiceEngine:input_MONO").unwrap();
+    for port in config.audio.output_ports {
+        client.connect_ports_by_name(out_port.name().unwrap().as_str(), &port).unwrap()
+    }
 
     // Register input port
     let in_port = client.register_port("input_MONO", AudioIn::default()).unwrap();
     // Connect input
-    client.connect_ports_by_name("Noise Canceling source:capture_MONO", in_port.name().unwrap().as_str()).unwrap();
+    client.connect_ports_by_name(&config.audio.input_port, in_port.name().unwrap().as_str()).unwrap();
 
     // Recording state
     // TODO: Consider making a struct

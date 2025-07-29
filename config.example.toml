@@ -1,0 +1,6 @@
+[audio]
+input_port = "Noise Canceling source:capture_MONO"
+output_ports = [
+    "PCM2902 Audio Codec Analog Stereo:playback_FL",
+    "PCM2902 Audio Codec Analog Stereo:playback_FR",
+]
