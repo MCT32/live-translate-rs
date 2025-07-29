@@ -1,6 +1,7 @@
-use std::{collections::VecDeque, io::{Cursor, Read}, sync::{Arc, Mutex}, thread};
+use std::{collections::VecDeque, io::Cursor, sync::{Arc, Mutex}, thread};
 use hound::WavReader;
 use jack::*;
+use log::{info, warn};
 use serde::Deserialize;
 use whisper_rs::{DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
@@ -115,13 +116,19 @@ fn translate_and_play(play_buffer: Arc<Mutex<VecDeque<f32>>>, ctx: Arc<Mutex<Whi
     play_buffer.append(&mut Into::<VecDeque<_>>::into(resampled));
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialise logger
+    env_logger::Builder::new().filter_level(log::LevelFilter::Info).init();
+
     // Load configuration file
     // TODO: Make tool for creating config if one isnt found
     let config = std::fs::read_to_string("config.toml").expect("Unable to read config file!");
 
     // Parse TOML
     let config: Config = toml::from_str(&config).expect("Couldn't parse config file!");
+
+    // Tell whisper to use log
+    whisper_rs::install_logging_hooks();
 
     // Load whisper
     // TODO: Handle downloading models
@@ -142,7 +149,14 @@ fn main() {
     // Connect output
     // TODO: Handle missing ports
     for port in config.audio.output_ports {
-        client.connect_ports_by_name(out_port.name().unwrap().as_str(), &port).unwrap()
+        match client.connect_ports_by_name(out_port.name().unwrap().as_str(), &port) {
+            Ok(_) => info!("Connected ouput to port {}", port),
+            Err(err) => match err {
+                jack::Error::PortAlreadyConnected(_, _) => warn!("Tried connecting output to port {}, but it was already connected", port),
+                jack::Error::PortConnectionError { source: _, destination: _, code_or_message } => warn!("Couldn't connect output to port {}, {}", port, code_or_message),
+                _ => return Result::Err(Box::new(err)),
+            },
+        }
     }
 
     // Register input port
@@ -185,7 +199,7 @@ fn main() {
                 // TODO: Make duration configurable
                 if silence >= 10 {
                     // Finish recording
-                    println!("Recording finished");
+                    info!("Recording finished");
                     recording = false;
 
                     // Clone Arcs for use in closure
@@ -203,7 +217,7 @@ fn main() {
                 // If noise level increases
                 if rms(in_buf) > 0.0 {
                     // Start recording
-                    println!("Recording started...");
+                    info!("Recording started...");
                     recording = true;
                     samples.clear();    // Clear previous recording
                     samples.append(&mut in_buf.to_vec());
@@ -240,4 +254,6 @@ fn main() {
     // Stop jack client
     // Unreachable with current solution
     active_client.deactivate().unwrap();
+
+    Ok(())
 }

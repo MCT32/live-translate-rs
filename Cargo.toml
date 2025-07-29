@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+env_logger = "0.11.8"
 hound = "3.5.1"
 jack = "0.13.3"
+log = "0.4.27"
 reqwest = { version="0.12.22", features=["blocking"] }
 serde = { version="1.0.219", features=["derive"] }
 speexdsp-resampler = "0.1.0"
 toml = "0.9.3"
-whisper-rs = { version="0.14.3", features=["cuda"] }
+whisper-rs = { version="0.14.3", features=["cuda", "log_backend"] }
