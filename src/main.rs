@@ -22,19 +22,29 @@ fn rms(buf: &[f32]) -> f32 {
     ((1.0 / buf.len() as f32) * buf.iter().map(|x| x.powi(2)).sum::<f32>()).sqrt()
 }
 
+fn resample(samples: Vec<f32>, from: usize, to: usize) -> Result<Vec<f32>, speexdsp_resampler::Error> {
+    // Create resampler
+    // TODO: Figure out putpose of quality param
+    let mut resampler = speexdsp_resampler::State::new(1, from, to, 4)?;
+
+    // Output buffer
+    // TODO: See if filling the buffer in necessary
+    // TODO: Find out what the + 512 is for
+    let mut resampled = vec![0.0; ((samples.len() as f64 * to as f64 / from as f64).ceil() as usize) + 512];
+
+    // Downsample
+    // TODO: Figure out what index is for
+    resampler.process_float(0, &samples, &mut resampled)?;
+
+    Ok(resampled)
+}
+
 // Send audio to whisper for transcribing
 fn transcribe(ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) -> String {
     // Lock whisper context
     let ctx = ctx.lock().unwrap();
 
-    // Initialise resampler for downsampling before passing samples to whisper
-    let mut resampler = speexdsp_resampler::State::new(1, 48000, 16000, 4).unwrap();
-
-    // TODO: Make into function
-    // Calculate expected new samples size
-    let mut resampled = vec![0.0; ((samples.len() as f64 * 16000 as f64 / 48000 as f64).ceil() as usize) + 512];
-    // Downsample
-    resampler.process_float(0, &samples, &mut resampled).unwrap();   // TODO: find out what first arg is for
+    let resampled = resample(samples, 48000, 16000).unwrap();
 
     // Whisper parameters
     // TODO: Make configurable
@@ -102,13 +112,7 @@ fn translate_and_play(play_buffer: Arc<Mutex<VecDeque<f32>>>, ctx: Arc<Mutex<Whi
     // Get sample rate
     let samplerate = reader.spec().sample_rate as usize;
     
-    // Create sample for upscaling result
-    let mut resampler = speexdsp_resampler::State::new(1, samplerate, 48000, 4).unwrap();
-
-    // Upsample the result
-    // TODO: Make into function
-    let mut resampled = vec![0.0; ((samples.len() as f64 * 48000 as f64 / samplerate as f64).ceil() as usize) + 512];
-    resampler.process_float(0, &samples, &mut resampled).unwrap();   // TODO: find out what first arg is for
+    let resampled = resample(samples, samplerate, 48000).unwrap();
 
     // Lock play buffer
     let mut play_buffer = play_buffer.lock().unwrap();
