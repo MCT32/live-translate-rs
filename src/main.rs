@@ -9,12 +9,23 @@ use whisper_rs::{DtwParameters, FullParams, SamplingStrategy, WhisperContext, Wh
 #[derive(Deserialize, Debug)]
 struct Config {
     audio: AudioConfig,
+    whisper: WhisperConfig,
 }
 
 #[derive(Deserialize, Debug)]
 struct AudioConfig {
     input_port: String,
     output_ports: Vec<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct WhisperConfig {
+    language: Option<String>,   // TODO: See if language can be validated during parsing
+    translate: bool,
+    no_context: bool,
+    single_segment: bool,       // TODO: Look into hardcoding this to simplify programming
+    print_realtime: bool,       // TODO: Probably hardcode this
+    print_progress: bool,       // TODO: Probably hardcode this
 }
 
 // Calculate RMS from samples
@@ -40,7 +51,7 @@ fn resample(samples: Vec<f32>, from: usize, to: usize) -> Result<Vec<f32>, speex
 }
 
 // Send audio to whisper for transcribing
-fn transcribe(ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) -> String {
+fn transcribe(config: Arc<Config>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) -> String {
     // Lock whisper context
     let ctx = ctx.lock().unwrap();
 
@@ -49,12 +60,12 @@ fn transcribe(ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) -> String {
     // Whisper parameters
     // TODO: Make configurable
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_language(Some("de"));
-    params.set_translate(true);
-    params.set_no_context(false);
-    params.set_single_segment(true);
-    params.set_print_realtime(false);   // TODO: experiment with this
-    params.set_print_progress(false);   // TODO: experiment with this
+    params.set_language(config.whisper.language.as_deref());
+    params.set_translate(config.whisper.translate);
+    params.set_no_context(config.whisper.no_context);
+    params.set_single_segment(config.whisper.single_segment);
+    params.set_print_realtime(config.whisper.print_realtime);
+    params.set_print_progress(config.whisper.print_progress);
 
     // Create whisper state
     let mut state = ctx.create_state().unwrap();
@@ -76,9 +87,9 @@ fn transcribe(ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) -> String {
     result
 }
 
-fn translate_and_play(play_buffer: Arc<Mutex<VecDeque<f32>>>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) {
+fn translate_and_play(config: Arc<Config>, play_buffer: Arc<Mutex<VecDeque<f32>>>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) {
     // Transcribe
-    let result = transcribe(ctx, samples.clone());
+    let result = transcribe(config, ctx, samples.clone());
 
     // Discard empty results
     if result.trim().is_empty() {
@@ -129,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = std::fs::read_to_string("config.toml").expect("Unable to read config file!");
 
     // Parse TOML
-    let config: Config = toml::from_str(&config).expect("Couldn't parse config file!");
+    let config: Arc<Config> = Arc::new(toml::from_str(&config).expect("Couldn't parse config file!"));
 
     // Tell whisper to use log
     whisper_rs::install_logging_hooks();
@@ -150,9 +161,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Regsiter output port
     let mut out_port = client.register_port("output_MONO", AudioOut::default()).unwrap();
+    
     // Connect output
-    // TODO: Handle missing ports
-    for port in config.audio.output_ports {
+    // TODO: Probably don't need to clone here
+    for port in config.audio.output_ports.clone() {
         match client.connect_ports_by_name(out_port.name().unwrap().as_str(), &port) {
             Ok(_) => info!("Connected ouput to port {}", port),
             Err(err) => match err {
@@ -210,11 +222,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let play_buffer_cloned = play_buffer.clone();
                     let whisper_ctx_cloned = whisper_ctx.clone();
                     let samples_cloned = samples.clone();
+                    let config_cloned = config.clone();
 
                     // Spawn a new thread to handle the rest, otherwise jack hangs and user has no audio until completed
                     thread::spawn(|| {
                         // Transcbribe, translate and play result
-                        translate_and_play(play_buffer_cloned, whisper_ctx_cloned, samples_cloned);
+                        translate_and_play(config_cloned, play_buffer_cloned, whisper_ctx_cloned, samples_cloned);
                     });
                 }
             } else {

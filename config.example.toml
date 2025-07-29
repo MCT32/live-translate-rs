@@ -4,3 +4,11 @@ output_ports = [
     "PCM2902 Audio Codec Analog Stereo:playback_FL",
     "PCM2902 Audio Codec Analog Stereo:playback_FR",
 ]
+
+[whisper]
+language = "de"
+translate = true
+no_context = false
+single_segment = true
+print_realtime = false
+print_progress = false
