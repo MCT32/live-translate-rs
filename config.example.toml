@@ -6,6 +6,7 @@ output_ports = [
 ]
 
 [whisper]
+model="large-v2"
 language = "de"
 translate = true
 no_context = false

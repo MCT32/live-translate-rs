@@ -4,7 +4,7 @@ use hound::WavReader;
 use jack::*;
 use log::{info, warn};
 use serde::Deserialize;
-use whisper_rs::{DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperError};
 
 // Configuration struct
 #[derive(Deserialize, Clone, Debug)]
@@ -21,6 +21,7 @@ struct AudioConfig {
 
 #[derive(Deserialize, Clone, Debug)]
 struct WhisperConfig {
+    model: String,
     language: Option<String>,   // TODO: See if language can be validated during parsing
     translate: bool,
     no_context: bool,
@@ -131,6 +132,17 @@ fn translate_and_play(config: Config, play_buffer: Arc<Mutex<VecDeque<f32>>>, ct
     play_buffer.append(&mut Into::<VecDeque<_>>::into(resampled));
 }
 
+// Load whisper
+// TODO: Handle downloading models
+fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperError> {
+    WhisperContext::new_with_params(format!("whisper/ggml-{}.bin", config.model).as_str(), WhisperContextParameters {
+        use_gpu: true,
+        flash_attn: false,
+        gpu_device: 0,
+        dtw_parameters: DtwParameters::default(),
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialise logger
     // Custom format to force newlines, allowing raw mode so keys can be retrieved without pressing enter
@@ -152,14 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     whisper_rs::install_logging_hooks();
 
     // Load whisper
-    // TODO: Handle downloading models
-    // TODO: Make model configurable
-    let whisper_ctx = Arc::new(Mutex::new(WhisperContext::new_with_params("whisper/ggml-large-v2.bin", WhisperContextParameters {
-        use_gpu: true,
-        flash_attn: false,
-        gpu_device: 0,
-        dtw_parameters: DtwParameters::default(),
-    }).unwrap()));
+    let whisper_ctx = Arc::new(Mutex::new(setup_whisper(config.whisper.clone()).unwrap()));
 
     // Initialise jack client
     let (client, _status) =
