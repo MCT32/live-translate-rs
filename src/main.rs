@@ -7,19 +7,19 @@ use serde::Deserialize;
 use whisper_rs::{DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 // Configuration struct
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 struct Config {
     audio: AudioConfig,
     whisper: WhisperConfig,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 struct AudioConfig {
     input_port: String,
     output_ports: Vec<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 struct WhisperConfig {
     language: Option<String>,   // TODO: See if language can be validated during parsing
     translate: bool,
@@ -52,7 +52,7 @@ fn resample(samples: Vec<f32>, from: usize, to: usize) -> Result<Vec<f32>, speex
 }
 
 // Send audio to whisper for transcribing
-fn transcribe(config: Arc<Config>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) -> String {
+fn transcribe(config: Config, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) -> String {
     // Lock whisper context
     let ctx = ctx.lock().unwrap();
 
@@ -87,7 +87,7 @@ fn transcribe(config: Arc<Config>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec
     result
 }
 
-fn translate_and_play(config: Arc<Config>, play_buffer: Arc<Mutex<VecDeque<f32>>>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) {
+fn translate_and_play(config: Config, play_buffer: Arc<Mutex<VecDeque<f32>>>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) {
     // Transcribe
     let result = transcribe(config, ctx, samples.clone());
 
@@ -146,7 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = std::fs::read_to_string("config.toml").expect("Unable to read config file!");
 
     // Parse TOML
-    let config: Arc<Config> = Arc::new(toml::from_str(&config).expect("Couldn't parse config file!"));
+    let config: Config = toml::from_str(&config).expect("Couldn't parse config file!");
 
     // Tell whisper to use log
     whisper_rs::install_logging_hooks();
@@ -165,26 +165,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (client, _status) =
         Client::new("rust_jack_client", ClientOptions::NO_START_SERVER).unwrap();
 
-    // Regsiter output port
-    let mut out_port = client.register_port("output_MONO", AudioOut::default()).unwrap();
-    
-    // Connect output
-    // TODO: Probably don't need to clone here
-    for port in config.audio.output_ports.clone() {
-        match client.connect_ports_by_name(out_port.name().unwrap().as_str(), &port) {
-            Ok(_) => info!("Connected ouput to port {}", port),
-            Err(err) => match err {
-                jack::Error::PortAlreadyConnected(_, _) => warn!("Tried connecting output to port {}, but it was already connected", port),
-                jack::Error::PortConnectionError { source: _, destination: _, code_or_message } => warn!("Couldn't connect output to port {}, {}", port, code_or_message),
-                _ => return Result::Err(Box::new(err)),
-            },
-        }
-    }
-
     // Register input port
     let in_port = client.register_port("input_MONO", AudioIn::default()).unwrap();
     // Connect input
     client.connect_ports_by_name(&config.audio.input_port, in_port.name().unwrap().as_str()).unwrap();
+
+    // Regsiter output port
+    let mut out_port = client.register_port("output_MONO", AudioOut::default()).unwrap();
+
+    // List of connections before program
+    let mut temp_disconnected: Vec<String> = vec![];
+    
+    // Connect output
+    // TODO: Probably don't need to clone here
+    for port in config.audio.output_ports.clone() {
+        if let Some(port) = client.port_by_name(&port) {
+            // Connect output to port
+            // TODO: Error handling
+            client.connect_ports(&out_port, &port).expect("Couldnt connect ports");
+
+            // Check for microphone connection
+            if port.is_connected_to(&config.audio.input_port).unwrap() {
+                info!("Port {} connected to input, temporarily disconnecting", port.name().unwrap());
+
+                // Add to list
+                temp_disconnected.push(port.name().unwrap());
+
+                // Disconnect ports
+                client.disconnect_ports_by_name(&config.audio.input_port, &port.name().unwrap()).unwrap();
+            }
+        } else {
+            warn!("Port {} doesn't exist!", port);
+        }
+    }
 
     // Recording state
     // TODO: Consider making a struct
@@ -195,6 +208,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Buffer for playing audio
     // TODO: Explore the performance of this
     let play_buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::new()));
+
+    let config_cloned = config.clone();
 
     // Jack client callback
     let process = jack::contrib::ClosureProcessHandler::new(
@@ -228,12 +243,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let play_buffer_cloned = play_buffer.clone();
                     let whisper_ctx_cloned = whisper_ctx.clone();
                     let samples_cloned = samples.clone();
-                    let config_cloned = config.clone();
+                    let config_cloned_cloned = config_cloned.clone();   // lol, TODO: Clean this up
 
                     // Spawn a new thread to handle the rest, otherwise jack hangs and user has no audio until completed
                     thread::spawn(|| {
                         // Transcbribe, translate and play result
-                        translate_and_play(config_cloned, play_buffer_cloned, whisper_ctx_cloned, samples_cloned);
+                        translate_and_play(config_cloned_cloned, play_buffer_cloned, whisper_ctx_cloned, samples_cloned);
                     });
                 }
             } else {
@@ -287,8 +302,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     disable_raw_mode().unwrap();
 
     // Stop jack client
-    // Unreachable with current solution
-    active_client.deactivate().unwrap();
+    let (client, _, _) = active_client.deactivate().unwrap();
+
+    // Reconnect disconnected ports
+    for port in temp_disconnected {
+        let config = config.clone();
+        client.connect_ports_by_name(&config.audio.input_port, &port).unwrap();
+    }
 
     Ok(())
 }
