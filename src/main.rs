@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fs::File, io::{Cursor, Write}, sync::{Arc, Mutex}, thread};
+use std::{collections::VecDeque, fs::File, io::{Cursor, Write}, process::Command, sync::{Arc, Mutex}, thread};
 use crossterm::{event::{self, Event, KeyCode}, terminal::{disable_raw_mode, enable_raw_mode}};
 use hound::WavReader;
 use jack::*;
@@ -190,6 +190,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load whisper
     let whisper_ctx = Arc::new(Mutex::new(setup_whisper(config.whisper.clone()).unwrap()));
 
+    // Start TTS server
+    // TODO: Guarantee server has started before continuing
+    let mut tts_server = Command::new("bash")
+        .arg("./piper.sh")
+        .spawn()
+        .unwrap();
+
     // Initialise jack client
     let (client, _status) =
         Client::new("rust_jack_client", ClientOptions::NO_START_SERVER).unwrap();
@@ -338,6 +345,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config = config.clone();
         client.connect_ports_by_name(&config.audio.input_port, &port).unwrap();
     }
+
+    // Kill TTS
+    tts_server.kill().unwrap();
 
     Ok(())
 }
