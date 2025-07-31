@@ -15,6 +15,7 @@ use std::{
     },
     thread::{self},
 };
+use webrtc_vad::Vad;
 use whisper_rs::{
     DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
     WhisperError,
@@ -47,11 +48,6 @@ struct WhisperConfig {
 enum ProcessUnit {
     Continue(Vec<f32>),
     Quit,
-}
-
-// Calculate RMS from samples
-fn rms(buf: &[f32]) -> f32 {
-    ((1.0 / buf.len() as f32) * buf.iter().map(|x| x.powi(2)).sum::<f32>()).sqrt()
 }
 
 fn resample(
@@ -250,9 +246,24 @@ fn process_audio(
     let mut silence: u32 = 0; // How many blocks have been silent, used to decide when to stop recording
     let mut samples: Vec<f32> = vec![];
 
+    // Voice activity detector instance
+    let mut vad = Vad::new_with_rate(webrtc_vad::SampleRate::Rate48kHz);
+
     for unit in audio {
         match unit {
             ProcessUnit::Continue(in_buf) => {
+                // Convert to i16 for VAD
+                let mut samples_int = in_buf
+                    .iter()
+                    .map(|x| (x.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16)
+                    .collect::<Vec<_>>();
+
+                // Truncate to correct size
+                samples_int.truncate(960);
+
+                // Detect voice activity
+                let is_voice = vad.is_voice_segment(&samples_int).unwrap();
+
                 // If recording already started
                 if recording {
                     // Add samples to recording buffer
@@ -260,7 +271,7 @@ fn process_audio(
 
                     // If voice activity detected
                     // TODO: Record a baseline noise level for people without noise canceling
-                    if rms(&in_buf) > 0.0 {
+                    if is_voice {
                         // Reset silence counter
                         silence = 0;
                     } else {
@@ -288,7 +299,7 @@ fn process_audio(
                     }
                 } else {
                     // If noise level increases
-                    if rms(&in_buf) > 0.0 {
+                    if is_voice {
                         // Start recording
                         info!("Recording started...");
                         recording = true;
@@ -390,6 +401,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_cloned = config.clone();
 
     // Spawn processing thread
+    // TODO: Name threads
     let audio_thread = thread::spawn(move || {
         process_audio(whisper_ctx, config_cloned, play_buffer_cloned, audio_rx)
     });
