@@ -1,5 +1,4 @@
-use std::{collections::VecDeque, fs::File, io::{Cursor, Write}, process::Command, sync::{Arc, Mutex}, thread};
-use crossterm::{event::{self, Event, KeyCode}, terminal::{disable_raw_mode, enable_raw_mode}};
+use std::{collections::VecDeque, fs::File, io::Cursor, process::Command, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, thread};
 use hound::WavReader;
 use jack::*;
 use log::{info, warn};
@@ -177,9 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: Find another solution to this without replacing the format
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
-        .format(|buf, record| {
-            writeln!(buf, "\r\n[{}] {}", record.level(), record.args())
-        }).init();
+        .init();
 
     // Load configuration file
     // TODO: Make tool for creating config if one isnt found
@@ -325,21 +322,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the client
     let active_client = client.activate_async((), process).unwrap();
 
-    info!("Quit by pressing Q");
+    // Bool so that program can safely exit
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
 
-    // Get key events instantly without line buffering
-    enable_raw_mode().unwrap();
+    // Handler for exit
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    }).expect("Error setting Ctrl+C handler");
 
-    // Keep running until Q is pressed
-    loop {
-        if let Event::Key(key_event) = event::read().unwrap() {
-            if key_event.code == KeyCode::Char('q') {
-                break;
-            }
-        }
+    // Keep running until exit
+    while running.load(Ordering::SeqCst) {
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
-
-    disable_raw_mode().unwrap();
 
     // Stop jack client
     let (client, _, _) = active_client.deactivate().unwrap();
