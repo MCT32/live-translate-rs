@@ -11,8 +11,9 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        mpsc::Receiver,
     },
-    thread,
+    thread::{self},
 };
 use whisper_rs::{
     DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
@@ -43,6 +44,11 @@ struct WhisperConfig {
     print_progress: bool, // TODO: Probably hardcode this
 }
 
+enum ProcessUnit {
+    Continue(Vec<f32>),
+    Quit,
+}
+
 // Calculate RMS from samples
 fn rms(buf: &[f32]) -> f32 {
     ((1.0 / buf.len() as f32) * buf.iter().map(|x| x.powi(2)).sum::<f32>()).sqrt()
@@ -71,10 +77,7 @@ fn resample(
 }
 
 // Send audio to whisper for transcribing
-fn transcribe(config: Config, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) -> String {
-    // Lock whisper context
-    let ctx = ctx.lock().unwrap();
-
+fn transcribe(config: &Config, ctx: &WhisperContext, samples: Vec<f32>) -> String {
     let resampled = resample(samples, 48000, 16000).unwrap();
 
     // Whisper parameters
@@ -107,9 +110,9 @@ fn transcribe(config: Config, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>
 }
 
 fn translate_and_play(
-    config: Config,
+    config: &Config,
     play_buffer: Arc<Mutex<VecDeque<f32>>>,
-    ctx: Arc<Mutex<WhisperContext>>,
+    ctx: &WhisperContext,
     samples: Vec<f32>,
 ) {
     // Transcribe
@@ -236,6 +239,69 @@ fn setup_piper() -> Child {
     piper
 }
 
+fn process_audio(
+    whisper_ctx: WhisperContext,
+    config: Arc<Config>,
+    play_buffer: Arc<Mutex<VecDeque<f32>>>,
+    audio: Receiver<ProcessUnit>,
+) {
+    // Recording state
+    let mut recording: bool = false; // Current recording status
+    let mut silence: u32 = 0; // How many blocks have been silent, used to decide when to stop recording
+    let mut samples: Vec<f32> = vec![];
+
+    for unit in audio {
+        match unit {
+            ProcessUnit::Continue(in_buf) => {
+                // If recording already started
+                if recording {
+                    // Add samples to recording buffer
+                    samples.append(&mut in_buf.to_vec());
+
+                    // If voice activity detected
+                    // TODO: Record a baseline noise level for people without noise canceling
+                    if rms(&in_buf) > 0.0 {
+                        // Reset silence counter
+                        silence = 0;
+                    } else {
+                        // Increment silence counter
+                        silence += 1;
+                    }
+
+                    // If there has been enough silence
+                    // TODO: Make duration configurable
+                    if silence >= 10 {
+                        // Finish recording
+                        info!("Recording finished");
+                        recording = false;
+
+                        // Clone Arcs for use in closure
+                        let samples_cloned = samples.clone();
+
+                        // Transcbribe, translate and play result
+                        translate_and_play(
+                            &config,
+                            play_buffer.clone(),
+                            &whisper_ctx,
+                            samples_cloned,
+                        );
+                    }
+                } else {
+                    // If noise level increases
+                    if rms(&in_buf) > 0.0 {
+                        // Start recording
+                        info!("Recording started...");
+                        recording = true;
+                        samples.clear(); // Clear previous recording
+                        samples.append(&mut in_buf.to_vec());
+                    }
+                }
+            }
+            ProcessUnit::Quit => break,
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialise logger
     // Custom format to force newlines, allowing raw mode so keys can be retrieved without pressing enter
@@ -249,13 +315,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = std::fs::read_to_string("config.toml").expect("Unable to read config file!");
 
     // Parse TOML
-    let config: Config = toml::from_str(&config).expect("Couldn't parse config file!");
+    let config: Arc<Config> =
+        Arc::new(toml::from_str(&config).expect("Couldn't parse config file!"));
 
     // Tell whisper to use log
     whisper_rs::install_logging_hooks();
 
     // Load whisper
-    let whisper_ctx = Arc::new(Mutex::new(setup_whisper(config.whisper.clone()).unwrap()));
+    let whisper_ctx = setup_whisper(config.whisper.clone()).unwrap();
 
     // Start TTS server
     let mut piper = setup_piper();
@@ -311,17 +378,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Recording state
-    // TODO: Consider making a struct
-    let mut recording: bool = false; // Current recording status
-    let mut silence: u32 = 0; // How many blocks have been silent, used to decide when to stop recording
-    let mut samples: Vec<f32> = vec![];
+    // Channel for sending audio from jack thread to processing thread
+    let (audio_tx, audio_rx) = std::sync::mpsc::channel::<ProcessUnit>();
 
     // Buffer for playing audio
     // TODO: Explore the performance of this
     let play_buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::new()));
 
+    // Clone arcs for processing thread
+    let play_buffer_cloned = play_buffer.clone();
     let config_cloned = config.clone();
+
+    // Spawn processing thread
+    let audio_thread = thread::spawn(move || {
+        process_audio(whisper_ctx, config_cloned, play_buffer_cloned, audio_rx)
+    });
+
+    // Clone for use in closure
+    let audio_tx_cloned = audio_tx.clone();
 
     // Jack client callback
     let process = jack::contrib::ClosureProcessHandler::new(
@@ -329,55 +403,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Get audio from input
             let in_buf = in_port.as_slice(ps);
 
-            // If recording already started
-            if recording {
-                // Add samples to recording buffer
-                samples.append(&mut in_buf.to_vec());
-
-                // If voice activity detected
-                // TODO: Record a baseline noise level for people without noise canceling
-                if rms(in_buf) > 0.0 {
-                    // Reset silence counter
-                    silence = 0;
-                } else {
-                    // Increment silence counter
-                    silence += 1;
-                }
-
-                // If there has been enough silence
-                // TODO: Make duration configurable
-                if silence >= 10 {
-                    // Finish recording
-                    info!("Recording finished");
-                    recording = false;
-
-                    // Clone Arcs for use in closure
-                    let play_buffer_cloned = play_buffer.clone();
-                    let whisper_ctx_cloned = whisper_ctx.clone();
-                    let samples_cloned = samples.clone();
-                    let config_cloned_cloned = config_cloned.clone(); // lol, TODO: Clean this up
-
-                    // Spawn a new thread to handle the rest, otherwise jack hangs and user has no audio until completed
-                    thread::spawn(|| {
-                        // Transcbribe, translate and play result
-                        translate_and_play(
-                            config_cloned_cloned,
-                            play_buffer_cloned,
-                            whisper_ctx_cloned,
-                            samples_cloned,
-                        );
-                    });
-                }
-            } else {
-                // If noise level increases
-                if rms(in_buf) > 0.0 {
-                    // Start recording
-                    info!("Recording started...");
-                    recording = true;
-                    samples.clear(); // Clear previous recording
-                    samples.append(&mut in_buf.to_vec());
-                }
-            }
+            audio_tx_cloned
+                .send(ProcessUnit::Continue(in_buf.to_vec()))
+                .unwrap();
 
             // Create buffer to write sound output
             let out_buf = out_port.as_mut_slice(ps);
@@ -417,12 +445,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
+    // Stop processing thread
+    audio_tx.send(ProcessUnit::Quit).unwrap();
+    audio_thread.join().unwrap();
+
     // Stop jack client
     let (client, _, _) = active_client.deactivate().unwrap();
 
     // Reconnect disconnected ports
     for port in temp_disconnected {
-        let config = config.clone();
         client
             .connect_ports_by_name(&config.audio.input_port, &port)
             .unwrap();
