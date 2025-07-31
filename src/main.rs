@@ -6,7 +6,8 @@ use std::{
     collections::VecDeque,
     fs::File,
     io::Cursor,
-    process::Command,
+    path::Path,
+    process::{Child, Command},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -200,6 +201,41 @@ fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperError> 
     )
 }
 
+// Make sure dependencies are installed and start piper
+fn setup_piper() -> Child {
+    // Virtual environment
+    const ENV_PATH: &str = "./env";
+
+    // Name of TTS model
+    // TODO: Make configurable
+    // TODO: Handle model downloading
+    let model = "en_US-lessac-high";
+
+    // Create virtual environment of it doesn't already exist
+    if !Path::new(ENV_PATH).exists() {
+        let status = Command::new("python3")
+            .args(["-m", "venv", ENV_PATH])
+            .status()
+            .unwrap();
+        assert!(status.success(), "Couldn't create virtual environment");
+    }
+
+    // Install depencencies
+    let status = Command::new(format!("{}/bin/pip", ENV_PATH))
+        .args(["install", "--upgrade", "pip", "piper-tts", "flask"])
+        .status()
+        .unwrap();
+    assert!(status.success(), "Couldn't install python dependencies");
+
+    // Run server
+    let piper = Command::new(format!("{}/bin/python", ENV_PATH))
+        .args(["-m", "piper.http_server", "-m", model])
+        .spawn()
+        .unwrap();
+
+    piper
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialise logger
     // Custom format to force newlines, allowing raw mode so keys can be retrieved without pressing enter
@@ -222,8 +258,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let whisper_ctx = Arc::new(Mutex::new(setup_whisper(config.whisper.clone()).unwrap()));
 
     // Start TTS server
-    // TODO: Guarantee server has started before continuing
-    let mut tts_server = Command::new("bash").arg("./piper.sh").spawn().unwrap();
+    let mut piper = setup_piper();
 
     // Initialise jack client
     let (client, _status) =
@@ -394,7 +429,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Kill TTS
-    tts_server.kill().unwrap();
+    piper.kill().unwrap();
 
     Ok(())
 }
