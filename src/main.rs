@@ -1,9 +1,22 @@
-use std::{collections::VecDeque, fs::File, io::Cursor, process::Command, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, thread};
 use hound::WavReader;
 use jack::*;
 use log::{info, warn};
 use serde::Deserialize;
-use whisper_rs::{DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperError};
+use std::{
+    collections::VecDeque,
+    fs::File,
+    io::Cursor,
+    process::Command,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+};
+use whisper_rs::{
+    DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
+    WhisperError,
+};
 
 // Configuration struct
 #[derive(Deserialize, Clone, Debug)]
@@ -21,12 +34,12 @@ struct AudioConfig {
 #[derive(Deserialize, Clone, Debug)]
 struct WhisperConfig {
     model: String,
-    language: Option<String>,   // TODO: See if language can be validated during parsing
+    language: Option<String>, // TODO: See if language can be validated during parsing
     translate: bool,
     no_context: bool,
-    single_segment: bool,       // TODO: Look into hardcoding this to simplify programming
-    print_realtime: bool,       // TODO: Probably hardcode this
-    print_progress: bool,       // TODO: Probably hardcode this
+    single_segment: bool, // TODO: Look into hardcoding this to simplify programming
+    print_realtime: bool, // TODO: Probably hardcode this
+    print_progress: bool, // TODO: Probably hardcode this
 }
 
 // Calculate RMS from samples
@@ -34,7 +47,11 @@ fn rms(buf: &[f32]) -> f32 {
     ((1.0 / buf.len() as f32) * buf.iter().map(|x| x.powi(2)).sum::<f32>()).sqrt()
 }
 
-fn resample(samples: Vec<f32>, from: usize, to: usize) -> Result<Vec<f32>, speexdsp_resampler::Error> {
+fn resample(
+    samples: Vec<f32>,
+    from: usize,
+    to: usize,
+) -> Result<Vec<f32>, speexdsp_resampler::Error> {
     // Create resampler
     // TODO: Figure out putpose of quality param
     let mut resampler = speexdsp_resampler::State::new(1, from, to, 4)?;
@@ -42,7 +59,8 @@ fn resample(samples: Vec<f32>, from: usize, to: usize) -> Result<Vec<f32>, speex
     // Output buffer
     // TODO: See if filling the buffer in necessary
     // TODO: Find out what the + 512 is for
-    let mut resampled = vec![0.0; ((samples.len() as f64 * to as f64 / from as f64).ceil() as usize) + 512];
+    let mut resampled =
+        vec![0.0; ((samples.len() as f64 * to as f64 / from as f64).ceil() as usize) + 512];
 
     // Downsample
     // TODO: Figure out what index is for
@@ -87,13 +105,18 @@ fn transcribe(config: Config, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>
     result
 }
 
-fn translate_and_play(config: Config, play_buffer: Arc<Mutex<VecDeque<f32>>>, ctx: Arc<Mutex<WhisperContext>>, samples: Vec<f32>) {
+fn translate_and_play(
+    config: Config,
+    play_buffer: Arc<Mutex<VecDeque<f32>>>,
+    ctx: Arc<Mutex<WhisperContext>>,
+    samples: Vec<f32>,
+) {
     // Transcribe
     let result = transcribe(config, ctx, samples.clone());
 
     // Discard empty results
     if result.trim().is_empty() {
-        return
+        return;
     }
 
     // Get TTS from server
@@ -101,7 +124,8 @@ fn translate_and_play(config: Config, play_buffer: Arc<Mutex<VecDeque<f32>>>, ct
     // TODO: Make address and other parameters configurable
     // TODO: Start server on program start
     let http_client = reqwest::blocking::Client::new();
-    let voice = http_client.post("http://localhost:5000")
+    let voice = http_client
+        .post("http://localhost:5000")
         .body(format!("{{ \"text\": \"{}\" }}", result))
         .send()
         .unwrap()
@@ -122,7 +146,7 @@ fn translate_and_play(config: Config, play_buffer: Arc<Mutex<VecDeque<f32>>>, ct
 
     // Get sample rate
     let samplerate = reader.spec().sample_rate as usize;
-    
+
     let resampled = resample(samples, samplerate, 48000).unwrap();
 
     // Lock play buffer
@@ -146,7 +170,10 @@ fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperError> 
 
         // Construct url
         // TODO: Maybe make this configurable
-        let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin?download=true", config.model);
+        let url = format!(
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin?download=true",
+            config.model
+        );
 
         // Create model file
         let mut model_file = File::create(&model_path).unwrap();
@@ -162,12 +189,15 @@ fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperError> 
     }
 
     // Create the context and load the model
-    WhisperContext::new_with_params(&model_path, WhisperContextParameters {
-        use_gpu: true,
-        flash_attn: false,
-        gpu_device: 0,
-        dtw_parameters: DtwParameters::default(),
-    })
+    WhisperContext::new_with_params(
+        &model_path,
+        WhisperContextParameters {
+            use_gpu: true,
+            flash_attn: false,
+            gpu_device: 0,
+            dtw_parameters: DtwParameters::default(),
+        },
+    )
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -193,43 +223,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start TTS server
     // TODO: Guarantee server has started before continuing
-    let mut tts_server = Command::new("bash")
-        .arg("./piper.sh")
-        .spawn()
-        .unwrap();
+    let mut tts_server = Command::new("bash").arg("./piper.sh").spawn().unwrap();
 
     // Initialise jack client
     let (client, _status) =
         Client::new("rust_jack_client", ClientOptions::NO_START_SERVER).unwrap();
 
     // Register input port
-    let in_port = client.register_port("input_MONO", AudioIn::default()).unwrap();
+    let in_port = client
+        .register_port("input_MONO", AudioIn::default())
+        .unwrap();
     // Connect input
-    client.connect_ports_by_name(&config.audio.input_port, in_port.name().unwrap().as_str()).unwrap();
+    client
+        .connect_ports_by_name(&config.audio.input_port, in_port.name().unwrap().as_str())
+        .unwrap();
 
     // Regsiter output port
-    let mut out_port = client.register_port("output_MONO", AudioOut::default()).unwrap();
+    let mut out_port = client
+        .register_port("output_MONO", AudioOut::default())
+        .unwrap();
 
     // List of connections before program
     let mut temp_disconnected: Vec<String> = vec![];
-    
+
     // Connect output
     // TODO: Probably don't need to clone here
     for port in config.audio.output_ports.clone() {
         if let Some(port) = client.port_by_name(&port) {
             // Connect output to port
             // TODO: Error handling
-            client.connect_ports(&out_port, &port).expect("Couldnt connect ports");
+            client
+                .connect_ports(&out_port, &port)
+                .expect("Couldnt connect ports");
 
             // Check for microphone connection
             if port.is_connected_to(&config.audio.input_port).unwrap() {
-                info!("Port {} connected to input, temporarily disconnecting", port.name().unwrap());
+                info!(
+                    "Port {} connected to input, temporarily disconnecting",
+                    port.name().unwrap()
+                );
 
                 // Add to list
                 temp_disconnected.push(port.name().unwrap());
 
                 // Disconnect ports
-                client.disconnect_ports_by_name(&config.audio.input_port, &port.name().unwrap()).unwrap();
+                client
+                    .disconnect_ports_by_name(&config.audio.input_port, &port.name().unwrap())
+                    .unwrap();
             }
         } else {
             warn!("Port {} doesn't exist!", port);
@@ -238,8 +278,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Recording state
     // TODO: Consider making a struct
-    let mut recording: bool = false;    // Current recording status
-    let mut silence: u32 = 0;           // How many blocks have been silent, used to decide when to stop recording
+    let mut recording: bool = false; // Current recording status
+    let mut silence: u32 = 0; // How many blocks have been silent, used to decide when to stop recording
     let mut samples: Vec<f32> = vec![];
 
     // Buffer for playing audio
@@ -280,12 +320,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let play_buffer_cloned = play_buffer.clone();
                     let whisper_ctx_cloned = whisper_ctx.clone();
                     let samples_cloned = samples.clone();
-                    let config_cloned_cloned = config_cloned.clone();   // lol, TODO: Clean this up
+                    let config_cloned_cloned = config_cloned.clone(); // lol, TODO: Clean this up
 
                     // Spawn a new thread to handle the rest, otherwise jack hangs and user has no audio until completed
                     thread::spawn(|| {
                         // Transcbribe, translate and play result
-                        translate_and_play(config_cloned_cloned, play_buffer_cloned, whisper_ctx_cloned, samples_cloned);
+                        translate_and_play(
+                            config_cloned_cloned,
+                            play_buffer_cloned,
+                            whisper_ctx_cloned,
+                            samples_cloned,
+                        );
                     });
                 }
             } else {
@@ -294,7 +339,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Start recording
                     info!("Recording started...");
                     recording = true;
-                    samples.clear();    // Clear previous recording
+                    samples.clear(); // Clear previous recording
                     samples.append(&mut in_buf.to_vec());
                 }
             }
@@ -329,7 +374,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handler for exit
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
-    }).expect("Error setting Ctrl+C handler");
+    })
+    .expect("Error setting Ctrl+C handler");
 
     // Keep running until exit
     while running.load(Ordering::SeqCst) {
@@ -342,7 +388,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Reconnect disconnected ports
     for port in temp_disconnected {
         let config = config.clone();
-        client.connect_ports_by_name(&config.audio.input_port, &port).unwrap();
+        client
+            .connect_ports_by_name(&config.audio.input_port, &port)
+            .unwrap();
     }
 
     // Kill TTS
