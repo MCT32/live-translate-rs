@@ -88,7 +88,7 @@ fn process_audio(
                                 .unwrap()
                         {
                             // Play TTS
-                            play_tts(play_buffer.clone(), result);
+                            play_tts(play_buffer.clone(), result).unwrap();
                         }
                     }
                 } else {
@@ -130,7 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let whisper_ctx = whisper::setup_whisper(config.whisper.clone()).unwrap();
 
     // Start TTS server
-    let mut piper = piper::setup_piper();
+    let mut piper = piper::setup_piper().unwrap();
 
     // Channel for sending audio from jack thread to processing thread
     let (audio_tx, audio_rx) = std::sync::mpsc::channel::<ProcessUnit>();
