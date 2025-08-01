@@ -1,5 +1,9 @@
 use std::{
-    collections::VecDeque, fmt::Display, path::Path, process::{Child, Command}, sync::{Arc, Mutex}
+    collections::VecDeque,
+    fmt::Display,
+    path::Path,
+    process::{Child, Command},
+    sync::{Arc, Mutex},
 };
 
 use log::warn;
@@ -16,12 +20,11 @@ pub enum ErrSetupPiper {
 impl Display for ErrSetupPiper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::IoError(io_error) =>
-                write!(f, "{}", io_error),
-            Self::CouldNotCreateEnv =>
-                write!(f, "Could not create python virtual environment for piper"),
-            Self::CouldNotInstallDeps =>
-                write!(f, "Could not install python dependencies")
+            Self::IoError(io_error) => write!(f, "{}", io_error),
+            Self::CouldNotCreateEnv => {
+                write!(f, "Could not create python virtual environment for piper")
+            }
+            Self::CouldNotInstallDeps => write!(f, "Could not install python dependencies"),
         }
     }
 }
@@ -44,12 +47,9 @@ pub enum ErrPlayTTS {
 impl Display for ErrPlayTTS {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ReqwestError(error) =>
-                write!(f, "{}", error),
-            Self::HoundError(error) =>
-                write!(f, "{}", error),
-            Self::ResampleError(error) =>
-                write!(f, "{:?}", error),
+            Self::ReqwestError(error) => write!(f, "{}", error),
+            Self::HoundError(error) => write!(f, "{}", error),
+            Self::ResampleError(error) => write!(f, "{:?}", error),
         }
     }
 }
