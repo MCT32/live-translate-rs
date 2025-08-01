@@ -19,6 +19,8 @@ use whisper_rs::WhisperContext;
 
 use crate::piper::play_tts;
 
+// TODO: Add tests
+
 // Configuration struct
 #[derive(Deserialize, Clone, Debug)]
 struct Config {
@@ -58,7 +60,15 @@ fn process_audio(
                 samples_int.truncate(960);
 
                 // Detect voice activity
-                let is_voice = vad.is_voice_segment(&samples_int).unwrap();
+                let is_voice = match vad.is_voice_segment(&samples_int) {
+                    Ok(is_voice) => is_voice,
+                    Err(_) => {
+                        // No error returned >:(
+                        // https://github.com/kaegi/webrtc-vad/issues/9
+                        error!("VAD could not evaluate if the audio was voice!");
+                        continue;
+                    },
+                };
 
                 // If recording already started
                 if recording {
@@ -82,12 +92,14 @@ fn process_audio(
                         recording = false;
 
                         // Transcribe
-                        if let Some(result) =
-                            whisper::transcribe(&config.whisper, &whisper_ctx, samples.clone())
-                                .unwrap()
-                        {
-                            // Play TTS
-                            play_tts(play_buffer.clone(), result).unwrap();
+                        match whisper::transcribe(&config.whisper, &whisper_ctx, samples.clone()) {
+                            Ok(result) => {
+                                if let Some(result) = result {
+                                    // Play TTS
+                                    play_tts(play_buffer.clone(), result).unwrap();
+                                }
+                            },
+                            Err(err) => error!("Could not transcribe audio!\n{}", err),
                         }
                     }
                 } else {
