@@ -1,6 +1,5 @@
 use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex, mpsc::Sender},
+    collections::VecDeque, sync::{mpsc::Sender, Arc, Mutex}
 };
 
 use jack::{
@@ -22,28 +21,25 @@ pub fn setup_jack(
     config: &AudioJackConfig,
     audio_tx: Sender<ProcessUnit>,
     play_buffer: Arc<Mutex<VecDeque<f32>>>,
-) -> (
+) -> Result<(
     Vec<String>,
     AsyncClient<(), ClosureProcessHandler<(), impl FnMut(&Client, &ProcessScope) -> Control>>,
-) {
+), jack::Error> {
     // Initialise jack client
     let (client, _status) =
-        Client::new("rust_jack_client", ClientOptions::NO_START_SERVER).unwrap();
+        Client::new("rust_jack_client", ClientOptions::NO_START_SERVER)?;
 
     // Register input port
     let in_port = client
-        .register_port("input_MONO", AudioIn::default())
-        .unwrap();
+        .register_port("input_MONO", AudioIn::default())?;
 
     // Regsiter output port
     let mut out_port = client
-        .register_port("output_MONO", AudioOut::default())
-        .unwrap();
+        .register_port("output_MONO", AudioOut::default())?;
 
     // Connect input
     client
-        .connect_ports_by_name(&config.input_port, in_port.name().unwrap().as_str())
-        .unwrap();
+        .connect_ports_by_name(&config.input_port, in_port.name()?.as_str())?;
 
     // List of connections before program
     let mut temp_disconnected: Vec<String> = vec![];
@@ -59,19 +55,18 @@ pub fn setup_jack(
                 .expect("Couldnt connect ports");
 
             // Check for microphone connection
-            if port.is_connected_to(&config.input_port).unwrap() {
+            if port.is_connected_to(&config.input_port)? {
                 info!(
                     "Port {} connected to input, temporarily disconnecting",
-                    port.name().unwrap()
+                    port.name()?
                 );
 
                 // Add to list
-                temp_disconnected.push(port.name().unwrap());
+                temp_disconnected.push(port.name()?);
 
                 // Disconnect ports
                 client
-                    .disconnect_ports_by_name(&config.input_port, &port.name().unwrap())
-                    .unwrap();
+                    .disconnect_ports_by_name(&config.input_port, &port.name()?)?;
             }
         } else {
             warn!("Port {} doesn't exist!", port);
@@ -79,14 +74,14 @@ pub fn setup_jack(
     }
 
     // Jack client callback
+    // TODO: Improve error handling
     let process = jack::contrib::ClosureProcessHandler::new(
         move |_: &Client, ps: &ProcessScope| -> jack::Control {
             // Get audio from input
             let in_buf = in_port.as_slice(ps);
 
             audio_tx
-                .send(ProcessUnit::Continue(in_buf.to_vec()))
-                .unwrap();
+                .send(ProcessUnit::Continue(in_buf.to_vec())).unwrap();
 
             // Create buffer to write sound output
             let out_buf = out_port.as_mut_slice(ps);
@@ -109,8 +104,8 @@ pub fn setup_jack(
     );
 
     // Start jack client
-    (
+    Ok((
         temp_disconnected,
-        client.activate_async((), process).unwrap(),
-    )
+        client.activate_async((), process)?,
+    ))
 }

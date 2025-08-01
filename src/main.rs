@@ -154,7 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start jack client
     let (temp_disconnected, active_client) =
-        audio_jack::setup_jack(&config.audio_jack, audio_tx_cloned, play_buffer);
+        audio_jack::setup_jack(&config.audio_jack, audio_tx_cloned, play_buffer).unwrap();
 
     // Bool so that program can safely exit
     let running = Arc::new(AtomicBool::new(true));
