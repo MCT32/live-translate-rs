@@ -7,7 +7,7 @@ use jack::{
     AsyncClient, AudioIn, AudioOut, Client, ClientOptions, Control, ProcessScope,
     contrib::ClosureProcessHandler,
 };
-use log::{info, warn};
+use log::{error, info, warn};
 use serde::Deserialize;
 
 use crate::ProcessUnit;
@@ -78,16 +78,23 @@ pub fn setup_jack(
             // Get audio from input
             let in_buf = in_port.as_slice(ps);
 
-            audio_tx
-                .send(ProcessUnit::Continue(in_buf.to_vec()))
-                .unwrap();
+            if let Err(err) = audio_tx.send(ProcessUnit::Continue(in_buf.to_vec())) {
+                error!("Could not send audio for processing!\n{}", err);
+                return jack::Control::Continue;
+            };
 
             // Create buffer to write sound output
             let out_buf = out_port.as_mut_slice(ps);
 
             {
                 // Lock the play buffer
-                let mut play_buffer = play_buffer.lock().unwrap();
+                let mut play_buffer = match play_buffer.lock() {
+                    Ok(buffer) => buffer,
+                    Err(err) => {
+                        error!("Could not lock play buffer!\n{}", err);
+                        return jack::Control::Continue;
+                    }
+                };
 
                 // Iterate through samples
                 // TODO: Try without iteration
