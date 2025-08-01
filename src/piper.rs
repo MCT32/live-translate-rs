@@ -1,12 +1,8 @@
 use std::{
-    collections::VecDeque,
-    fmt::Display,
-    path::Path,
-    process::{Child, Command},
-    sync::{Arc, Mutex},
+    collections::VecDeque, fmt::Display, io::{BufRead, BufReader}, path::Path, process::{Child, Command, Stdio}, sync::{Arc, Mutex}, thread
 };
 
-use log::warn;
+use log::{info, warn, error};
 
 use crate::util::resample;
 
@@ -74,6 +70,40 @@ impl From<speexdsp_resampler::Error> for ErrPlayTTS {
     }
 }
 
+// Pipe output to log and run
+fn run_command_with_log(command: &mut Command) -> Result<Child, std::io::Error> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    if let Some(stdout) = child.stdout.take() {
+        let reader = BufReader::new(stdout);
+        thread::spawn(move || {
+            for line in reader.lines() {
+                match line {
+                    Ok(line) => info!("[stdout] {}", line),
+                    Err(err) => error!("Error reading stdout: {}", err)
+                }
+            }
+        });
+    }
+
+    if let Some(stderr) = child.stderr.take() {
+        let reader = BufReader::new(stderr);
+        thread::spawn(move || {
+            for line in reader.lines() {
+                match line {
+                    Ok(line) => info!("[stderr] {}", line),
+                    Err(err) => error!("Error reading stderr: {}", err)
+                }
+            }
+        });
+    }
+
+    Ok(child)
+}
+
 // Make sure dependencies are installed and start piper
 pub fn setup_piper() -> Result<Child, ErrSetupPiper> {
     // Virtual environment
@@ -85,31 +115,28 @@ pub fn setup_piper() -> Result<Child, ErrSetupPiper> {
     let model = "en_US-lessac-high";
 
     // Create virtual environment of it doesn't already exist
-    // TODO: Try printing python stdout/stderr through log
     if !Path::new(ENV_PATH).exists() {
         warn!("Python virtual environment does not exist, creating now");
 
-        let status = Command::new("python3")
-            .args(["-m", "venv", ENV_PATH])
-            .status()?;
+        let status = run_command_with_log(Command::new("python3")
+            .args(["-m", "venv", ENV_PATH]))?
+            .wait()?;
         if !status.success() {
             return Err(ErrSetupPiper::CouldNotCreateEnv);
         }
     }
 
     // Install depencencies
-    let status = Command::new(format!("{}/bin/pip", ENV_PATH))
-        .args(["install", "--upgrade", "pip", "piper-tts", "flask"])
-        .status()?;
-    assert!(status.success(), "Couldn't install python dependencies");
+    let status = run_command_with_log(Command::new(format!("{}/bin/pip", ENV_PATH))
+        .args(["install", "--upgrade", "pip", "piper-tts", "flask"]))?
+        .wait()?;
     if !status.success() {
         return Err(ErrSetupPiper::CouldNotInstallDeps);
     }
 
     // Run server
-    let piper = Command::new(format!("{}/bin/python", ENV_PATH))
-        .args(["-m", "piper.http_server", "-m", model])
-        .spawn()?;
+    let piper = run_command_with_log(Command::new(format!("{}/bin/python", ENV_PATH))
+        .args(["-m", "piper.http_server", "-m", model]))?;
 
     Ok(piper)
 }
