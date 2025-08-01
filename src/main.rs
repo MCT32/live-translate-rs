@@ -85,6 +85,7 @@ fn process_audio(
                         // Transcribe
                         if let Some(result) =
                             whisper::transcribe(&config.whisper, &whisper_ctx, samples.clone())
+                                .unwrap()
                         {
                             // Play TTS
                             play_tts(play_buffer.clone(), result);

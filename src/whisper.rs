@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use log::{info, warn};
 use serde::Deserialize;
 use whisper_rs::{
@@ -6,6 +8,77 @@ use whisper_rs::{
 };
 
 use crate::util::resample;
+
+#[derive(Debug)]
+pub enum ErrSetupWhisper {
+    WhisperError(WhisperError),
+    IoError(std::io::Error),
+    ReqwestError(reqwest::Error),
+}
+
+impl Display for ErrSetupWhisper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WhisperError(whisper_error) => write!(f, "{}", whisper_error),
+            Self::IoError(io_error) => write!(f, "{}", io_error),
+            Self::ReqwestError(reqwest_error) => write!(f, "{}", reqwest_error),
+        }
+    }
+}
+
+impl std::error::Error for ErrSetupWhisper {}
+
+impl From<WhisperError> for ErrSetupWhisper {
+    fn from(value: WhisperError) -> Self {
+        Self::WhisperError(value)
+    }
+}
+
+impl From<std::io::Error> for ErrSetupWhisper {
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(value)
+    }
+}
+
+impl From<reqwest::Error> for ErrSetupWhisper {
+    fn from(value: reqwest::Error) -> Self {
+        Self::ReqwestError(value)
+    }
+}
+
+#[derive(Debug)]
+pub enum ErrTranscribe {
+    WhisperError(WhisperError),
+    ResampleError(speexdsp_resampler::Error),
+}
+
+impl Display for ErrTranscribe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WhisperError(whisper_error) => write!(f, "{}", whisper_error),
+            Self::ResampleError(resample_error) =>
+            // Speexdsp error isn't a real error >:(
+            // TODO: Open issue about this
+            {
+                write!(f, "{:?}", resample_error)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ErrTranscribe {}
+
+impl From<WhisperError> for ErrTranscribe {
+    fn from(value: WhisperError) -> Self {
+        Self::WhisperError(value)
+    }
+}
+
+impl From<speexdsp_resampler::Error> for ErrTranscribe {
+    fn from(value: speexdsp_resampler::Error) -> Self {
+        Self::ResampleError(value)
+    }
+}
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct WhisperConfig {
@@ -19,7 +92,7 @@ pub struct WhisperConfig {
 }
 
 // Load whisper
-pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperError> {
+pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, ErrSetupWhisper> {
     // Get relative path
     let model_path = format!("whisper/ggml-{}.bin", config.model);
 
@@ -28,7 +101,7 @@ pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperErr
     let _ = std::fs::create_dir("whisper");
 
     // Check model exists
-    if !std::fs::exists(&model_path).unwrap() {
+    if !std::fs::exists(&model_path)? {
         warn!("Model {} not found, attempting to download", model_path);
 
         // Construct url
@@ -39,20 +112,21 @@ pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperErr
         );
 
         // Create model file
-        let mut model_file = std::fs::File::create(&model_path).unwrap();
+        let mut model_file = std::fs::File::create(&model_path)?;
 
         // Download model file
         // TODO: Add a progress bar
-        let mut download = reqwest::blocking::get(url).unwrap();
+        // TODO: Customise error type to explain model download
+        let mut download = reqwest::blocking::get(url)?;
 
         // Copy contents
-        std::io::copy(&mut download, &mut model_file).unwrap();
+        std::io::copy(&mut download, &mut model_file)?;
 
         info!("Model {} downloaded", config.model);
     }
 
     // Create the context and load the model
-    WhisperContext::new_with_params(
+    Ok(WhisperContext::new_with_params(
         &model_path,
         WhisperContextParameters {
             use_gpu: true,
@@ -60,7 +134,7 @@ pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperErr
             gpu_device: 0,
             dtw_parameters: DtwParameters::default(),
         },
-    )
+    )?)
 }
 
 // Send audio to whisper for transcribing
@@ -69,8 +143,8 @@ pub fn transcribe(
     whisper_config: &WhisperConfig,
     ctx: &WhisperContext,
     samples: Vec<f32>,
-) -> Option<String> {
-    let resampled = resample(samples, 48000, 16000).unwrap();
+) -> Result<Option<String>, ErrTranscribe> {
+    let resampled = resample(samples, 48000, 16000)?;
 
     // Whisper parameters
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
@@ -82,26 +156,26 @@ pub fn transcribe(
     params.set_print_progress(whisper_config.print_progress);
 
     // Create whisper state
-    let mut state = ctx.create_state().unwrap();
+    let mut state = ctx.create_state()?;
     // Transcribe
     // TODO: Pad recordings that are too short
-    state.full(params, &resampled).unwrap();
+    state.full(params, &resampled)?;
 
     // Get number of output segments
-    let n_segments = state.full_n_segments().unwrap();
+    let n_segments = state.full_n_segments()?;
     // Create empty result string to fill
     let mut result = String::new();
 
     // Loop through segments
     for i in 0..n_segments {
         // Add each segment to the result string
-        result.push_str(state.full_get_segment_text(i).unwrap().as_str());
+        result.push_str(state.full_get_segment_text(i)?.as_str());
     }
 
     // Discard empty results
     if result.trim().is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(result)
+        Ok(Some(result))
     }
 }
