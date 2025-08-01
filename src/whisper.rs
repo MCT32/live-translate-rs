@@ -69,7 +69,7 @@ pub fn transcribe(
     whisper_config: &WhisperConfig,
     ctx: &WhisperContext,
     samples: Vec<f32>,
-) -> String {
+) -> Option<String> {
     let resampled = resample(samples, 48000, 16000).unwrap();
 
     // Whisper parameters
@@ -98,6 +98,10 @@ pub fn transcribe(
         result.push_str(state.full_get_segment_text(i).unwrap().as_str());
     }
 
-    // Return result
-    result
+    // Discard empty results
+    if result.trim().is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
