@@ -67,7 +67,7 @@ fn process_audio(
                         // https://github.com/kaegi/webrtc-vad/issues/9
                         error!("VAD could not evaluate if the audio was voice!");
                         continue;
-                    },
+                    }
                 };
 
                 // If recording already started
@@ -98,7 +98,7 @@ fn process_audio(
                                     // Play TTS
                                     play_tts(play_buffer.clone(), result).unwrap();
                                 }
-                            },
+                            }
                             Err(err) => error!("Could not transcribe audio!\n{}", err),
                         }
                     }
@@ -176,10 +176,15 @@ fn main() {
     let config_cloned = config.clone();
 
     // Spawn processing thread
-    // TODO: Name threads
-    let audio_thread = thread::spawn(move || {
-        process_audio(whisper_ctx, config_cloned, play_buffer_cloned, audio_rx)
-    });
+    let audio_thread = match thread::Builder::new()
+        .name("audio_processor".to_owned())
+        .spawn(move || process_audio(whisper_ctx, config_cloned, play_buffer_cloned, audio_rx)) {
+            Ok(thread) => thread,
+            Err(err) => {
+                error!("Could not start audio processing thread!\n{}", err);
+                return;
+            },
+        };
 
     // Clone for use in closure
     let audio_tx_cloned = audio_tx.clone();
