@@ -58,7 +58,7 @@ impl Display for ErrTranscribe {
             Self::WhisperError(whisper_error) => write!(f, "{}", whisper_error),
             Self::ResampleError(resample_error) =>
             // Speexdsp error isn't a real error >:(
-            // TODO: Open issue about this
+            // https://github.com/rust-av/speexdsp-rs/issues/103
             {
                 write!(f, "{:?}", resample_error)
             }
@@ -83,7 +83,7 @@ impl From<speexdsp_resampler::Error> for ErrTranscribe {
 #[derive(Deserialize, Clone, Debug)]
 pub struct WhisperConfig {
     pub model: String,
-    pub language: Option<String>, // TODO: See if language can be validated during parsing
+    pub language: Option<String>,
     pub translate: bool,
     pub no_context: bool,
     pub single_segment: bool, // TODO: Look into hardcoding this to simplify programming
@@ -108,7 +108,6 @@ pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, ErrSetupWh
         warn!("Model {} not found, attempting to download", model_path);
 
         // Construct url
-        // TODO: Maybe make this configurable
         let url = format!(
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin?download=true",
             config.model
@@ -141,7 +140,6 @@ pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, ErrSetupWh
 }
 
 // Send audio to whisper for transcribing
-// TODO: Error propigation
 pub fn transcribe(
     whisper_config: &WhisperConfig,
     ctx: &WhisperContext,

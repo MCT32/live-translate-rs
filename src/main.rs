@@ -66,7 +66,6 @@ fn process_audio(
                     samples.append(&mut in_buf.to_vec());
 
                     // If voice activity detected
-                    // TODO: Record a baseline noise level for people without noise canceling
                     if is_voice {
                         // Reset silence counter
                         silence = 0;
@@ -110,7 +109,6 @@ fn process_audio(
 fn main() {
     // Initialise logger
     // Custom format to force newlines, allowing raw mode so keys can be retrieved without pressing enter
-    // TODO: Find another solution to this without replacing the format
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
         .init();
@@ -159,7 +157,6 @@ fn main() {
     let (audio_tx, audio_rx) = std::sync::mpsc::channel::<ProcessUnit>();
 
     // Buffer for playing audio
-    // TODO: Explore the performance of this
     let play_buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::new()));
 
     // Clone arcs for processing thread

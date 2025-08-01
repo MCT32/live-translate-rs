@@ -45,7 +45,6 @@ pub fn setup_jack(
     let mut temp_disconnected: Vec<String> = vec![];
 
     // Connect output
-    // TODO: Probably don't need to clone here
     for port in config.output_ports.clone() {
         if let Some(port) = client.port_by_name(&port) {
             // Connect output to port
