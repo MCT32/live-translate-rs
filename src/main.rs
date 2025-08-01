@@ -95,7 +95,9 @@ fn process_audio(
                             Ok(result) => {
                                 if let Some(result) = result {
                                     // Play TTS
-                                    play_tts(play_buffer.clone(), result).unwrap();
+                                    if let Err(err) = play_tts(play_buffer.clone(), result) {
+                                        error!("Could not generate TTS audio!\n{}", err)
+                                    };
                                 }
                             }
                             Err(err) => error!("Could not transcribe audio!\n{}", err),
