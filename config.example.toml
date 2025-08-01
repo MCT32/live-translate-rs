@@ -11,3 +11,6 @@ language = "de"
 translate = true
 no_context = false
 silence_length = 10
+
+[piper]
+model = "en_US-lessac-high"

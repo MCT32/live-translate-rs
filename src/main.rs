@@ -26,6 +26,7 @@ use crate::piper::play_tts;
 struct Config {
     audio_jack: audio_jack::AudioJackConfig,
     whisper: whisper::WhisperConfig,
+    piper: piper::PiperConfig,
 }
 
 enum ProcessUnit {
@@ -158,7 +159,7 @@ fn main() {
     };
 
     // Start TTS server
-    let mut piper = match piper::setup_piper() {
+    let mut piper = match piper::setup_piper(&config.piper) {
         Ok(child) => child,
         Err(err) => {
             error!("Could not start piper server!\n{}", err);

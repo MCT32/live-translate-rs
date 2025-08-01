@@ -9,6 +9,7 @@ use std::{
 };
 
 use log::{error, info, warn};
+use serde::Deserialize;
 
 use crate::util::resample;
 
@@ -76,6 +77,11 @@ impl From<speexdsp_resampler::Error> for ErrPlayTTS {
     }
 }
 
+#[derive(Deserialize, Clone, Debug)]
+pub struct PiperConfig {
+    pub model: String,
+}
+
 // Pipe output to log and run
 fn run_command_with_log(command: &mut Command) -> Result<Child, std::io::Error> {
     let mut child = command
@@ -111,15 +117,12 @@ fn run_command_with_log(command: &mut Command) -> Result<Child, std::io::Error> 
 }
 
 // Make sure dependencies are installed and start piper
-pub fn setup_piper() -> Result<Child, ErrSetupPiper> {
+// TODO: Make some optional params configurable
+pub fn setup_piper(config: &PiperConfig) -> Result<Child, ErrSetupPiper> {
     // Virtual environment
     const ENV_PATH: &str = "./env";
 
-    // Name of TTS model
-    // TODO: Make configurable
     // TODO: Handle model downloading
-    let model = "en_US-lessac-high";
-
     // Create virtual environment of it doesn't already exist
     if !Path::new(ENV_PATH).exists() {
         warn!("Python virtual environment does not exist, creating now");
@@ -149,7 +152,7 @@ pub fn setup_piper() -> Result<Child, ErrSetupPiper> {
         "-m",
         "piper.http_server",
         "-m",
-        model,
+        config.model.as_str(),
     ]))?;
 
     Ok(piper)
