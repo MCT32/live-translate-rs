@@ -93,7 +93,6 @@ pub fn setup_jack(
                 };
 
                 // Iterate through samples
-                // TODO: Try without iteration
                 for frame in out_buf.iter_mut() {
                     // Pop sample from buffer if its available, otherwise output silence
                     *frame = play_buffer.pop_front().unwrap_or(0.0);
