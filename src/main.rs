@@ -178,13 +178,14 @@ fn main() {
     // Spawn processing thread
     let audio_thread = match thread::Builder::new()
         .name("audio_processor".to_owned())
-        .spawn(move || process_audio(whisper_ctx, config_cloned, play_buffer_cloned, audio_rx)) {
-            Ok(thread) => thread,
-            Err(err) => {
-                error!("Could not start audio processing thread!\n{}", err);
-                return;
-            },
-        };
+        .spawn(move || process_audio(whisper_ctx, config_cloned, play_buffer_cloned, audio_rx))
+    {
+        Ok(thread) => thread,
+        Err(err) => {
+            error!("Could not start audio processing thread!\n{}", err);
+            return;
+        }
+    };
 
     // Clone for use in closure
     let audio_tx_cloned = audio_tx.clone();

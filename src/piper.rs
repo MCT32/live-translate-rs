@@ -1,8 +1,14 @@
 use std::{
-    collections::VecDeque, fmt::Display, io::{BufRead, BufReader}, path::Path, process::{Child, Command, Stdio}, sync::{Arc, Mutex}, thread
+    collections::VecDeque,
+    fmt::Display,
+    io::{BufRead, BufReader},
+    path::Path,
+    process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
+    thread,
 };
 
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 use crate::util::resample;
 
@@ -83,7 +89,7 @@ fn run_command_with_log(command: &mut Command) -> Result<Child, std::io::Error> 
             for line in reader.lines() {
                 match line {
                     Ok(line) => info!("[stdout] {}", line),
-                    Err(err) => error!("Error reading stdout: {}", err)
+                    Err(err) => error!("Error reading stdout: {}", err),
                 }
             }
         });
@@ -95,7 +101,7 @@ fn run_command_with_log(command: &mut Command) -> Result<Child, std::io::Error> 
             for line in reader.lines() {
                 match line {
                     Ok(line) => info!("[stderr] {}", line),
-                    Err(err) => error!("Error reading stderr: {}", err)
+                    Err(err) => error!("Error reading stderr: {}", err),
                 }
             }
         });
@@ -118,25 +124,33 @@ pub fn setup_piper() -> Result<Child, ErrSetupPiper> {
     if !Path::new(ENV_PATH).exists() {
         warn!("Python virtual environment does not exist, creating now");
 
-        let status = run_command_with_log(Command::new("python3")
-            .args(["-m", "venv", ENV_PATH]))?
-            .wait()?;
+        let status =
+            run_command_with_log(Command::new("python3").args(["-m", "venv", ENV_PATH]))?.wait()?;
         if !status.success() {
             return Err(ErrSetupPiper::CouldNotCreateEnv);
         }
     }
 
     // Install depencencies
-    let status = run_command_with_log(Command::new(format!("{}/bin/pip", ENV_PATH))
-        .args(["install", "--upgrade", "pip", "piper-tts", "flask"]))?
-        .wait()?;
+    let status = run_command_with_log(Command::new(format!("{}/bin/pip", ENV_PATH)).args([
+        "install",
+        "--upgrade",
+        "pip",
+        "piper-tts",
+        "flask",
+    ]))?
+    .wait()?;
     if !status.success() {
         return Err(ErrSetupPiper::CouldNotInstallDeps);
     }
 
     // Run server
-    let piper = run_command_with_log(Command::new(format!("{}/bin/python", ENV_PATH))
-        .args(["-m", "piper.http_server", "-m", model]))?;
+    let piper = run_command_with_log(Command::new(format!("{}/bin/python", ENV_PATH)).args([
+        "-m",
+        "piper.http_server",
+        "-m",
+        model,
+    ]))?;
 
     Ok(piper)
 }
