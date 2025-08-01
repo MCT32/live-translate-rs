@@ -98,8 +98,9 @@ pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, ErrSetupWh
     let model_path = format!("whisper/ggml-{}.bin", config.model);
 
     // Ensure whisper directory exists
-    // TODO: Improve error handling
-    let _ = std::fs::create_dir("whisper");
+    if let Ok(_) = std::fs::create_dir("whisper") {
+        warn!("Whisper directory didnt exist, creating now");
+    }
 
     // Check model exists
     if !std::fs::exists(&model_path)? {
