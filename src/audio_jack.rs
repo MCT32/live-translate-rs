@@ -48,10 +48,7 @@ pub fn setup_jack(
     for port in config.output_ports.clone() {
         if let Some(port) = client.port_by_name(&port) {
             // Connect output to port
-            // TODO: Error handling
-            client
-                .connect_ports(&out_port, &port)
-                .expect("Couldnt connect ports");
+            client.connect_ports(&out_port, &port)?;
 
             // Check for microphone connection
             if port.is_connected_to(&config.input_port)? {
