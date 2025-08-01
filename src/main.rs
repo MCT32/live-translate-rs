@@ -3,7 +3,7 @@ mod piper;
 mod util;
 mod whisper;
 
-use log::info;
+use log::{error, info};
 use serde::Deserialize;
 use std::{
     collections::VecDeque,
@@ -107,7 +107,7 @@ fn process_audio(
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     // Initialise logger
     // Custom format to force newlines, allowing raw mode so keys can be retrieved without pressing enter
     // TODO: Find another solution to this without replacing the format
@@ -117,20 +117,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load configuration file
     // TODO: Make tool for creating config if one isnt found
-    let config = std::fs::read_to_string("config.toml").expect("Unable to read config file!");
+    // TODO: Potentially create macro for this pattern
+    // TODO: Reconnect ports after disconnection when error occurs, where applicable
+    // TODO: Kill piper server when error occurs, where applicable
+    let config = match std::fs::read_to_string("config.toml") {
+        Ok(content) => content,
+        Err(_) => {
+            error!("Could not read config file!");
+            return;
+        }
+    };
 
     // Parse TOML
-    let config: Arc<Config> =
-        Arc::new(toml::from_str(&config).expect("Couldn't parse config file!"));
-
-    // Tell whisper to use log
-    whisper_rs::install_logging_hooks();
+    let config: Arc<Config> = Arc::new(match toml::from_str(&config) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            error!("Could not parse config file!\n{}", err);
+            return;
+        }
+    });
 
     // Load whisper
-    let whisper_ctx = whisper::setup_whisper(config.whisper.clone()).unwrap();
+    let whisper_ctx = match whisper::setup_whisper(config.whisper.clone()) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            error!("Could not set up whisper!\n{}", err);
+            return;
+        }
+    };
 
     // Start TTS server
-    let mut piper = piper::setup_piper().unwrap();
+    let mut piper = match piper::setup_piper() {
+        Ok(child) => child,
+        Err(err) => {
+            error!("Could not start piper server!\n{}", err);
+            return;
+        }
+    };
 
     // Channel for sending audio from jack thread to processing thread
     let (audio_tx, audio_rx) = std::sync::mpsc::channel::<ProcessUnit>();
@@ -154,17 +177,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start jack client
     let (temp_disconnected, active_client) =
-        audio_jack::setup_jack(&config.audio_jack, audio_tx_cloned, play_buffer).unwrap();
+        match audio_jack::setup_jack(&config.audio_jack, audio_tx_cloned, play_buffer) {
+            Ok(client) => client,
+            Err(err) => {
+                error!("Could not set up jack client!\n{}", err);
+                return;
+            }
+        };
 
     // Bool so that program can safely exit
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
 
     // Handler for exit
-    ctrlc::set_handler(move || {
+    if let Err(err) = ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
-    })
-    .expect("Error setting Ctrl+C handler");
+    }) {
+        error!("Could not create crtlc handle!\n{}", err);
+        return;
+    };
 
     // Keep running until exit
     while running.load(Ordering::SeqCst) {
@@ -172,21 +203,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Stop processing thread
-    audio_tx.send(ProcessUnit::Quit).unwrap();
-    audio_thread.join().unwrap();
+    if let Err(err) = audio_tx.send(ProcessUnit::Quit) {
+        error!(
+            "Could not send stop signal to audio processing thread!\n{}",
+            err
+        );
+    };
+    if let Err(_) = audio_thread.join() {
+        error!("Could not join audio processing thread!");
+    };
 
     // Stop jack client
-    let (client, _, _) = active_client.deactivate().unwrap();
+    let (client, _, _) = match active_client.deactivate() {
+        Ok(client) => client,
+        Err(err) => {
+            error!("Could not deactivate jack client!\n{}", err);
+            return;
+        }
+    };
 
     // Reconnect disconnected ports
     for port in temp_disconnected {
-        client
-            .connect_ports_by_name(&config.audio_jack.input_port, &port)
-            .unwrap();
+        if let Err(err) = client.connect_ports_by_name(&config.audio_jack.input_port, &port) {
+            error!(
+                "Could not reconnect port {} to {}!\n{}",
+                &config.audio_jack.input_port, &port, err
+            );
+        }
     }
 
     // Kill TTS
-    piper.kill().unwrap();
-
-    Ok(())
+    if let Err(err) = piper.kill() {
+        error!("Could not kill piper server!\n{}", err);
+    };
 }

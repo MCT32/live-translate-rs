@@ -93,6 +93,9 @@ pub struct WhisperConfig {
 
 // Load whisper
 pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, ErrSetupWhisper> {
+    // Tell whisper to use log
+    whisper_rs::install_logging_hooks();
+
     // Get relative path
     let model_path = format!("whisper/ggml-{}.bin", config.model);
 
