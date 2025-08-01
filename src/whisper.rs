@@ -86,9 +86,6 @@ pub struct WhisperConfig {
     pub language: Option<String>,
     pub translate: bool,
     pub no_context: bool,
-    pub single_segment: bool, // TODO: Look into hardcoding this to simplify programming
-    pub print_realtime: bool, // TODO: Probably hardcode this
-    pub print_progress: bool, // TODO: Probably hardcode this
 }
 
 // Load whisper
@@ -152,9 +149,9 @@ pub fn transcribe(
     params.set_language(whisper_config.language.as_deref());
     params.set_translate(whisper_config.translate);
     params.set_no_context(whisper_config.no_context);
-    params.set_single_segment(whisper_config.single_segment);
-    params.set_print_realtime(whisper_config.print_realtime);
-    params.set_print_progress(whisper_config.print_progress);
+    params.set_single_segment(true);
+    params.set_print_realtime(false);
+    params.set_print_progress(false);
 
     // Create whisper state
     let mut state = ctx.create_state()?;

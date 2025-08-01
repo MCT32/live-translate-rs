@@ -10,6 +10,3 @@ model="large-v2"
 language = "de"
 translate = true
 no_context = false
-single_segment = true
-print_realtime = false
-print_progress = false
