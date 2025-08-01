@@ -1,10 +1,12 @@
+mod util;
+mod whisper;
+
 use hound::WavReader;
 use jack::*;
 use log::{info, warn};
 use serde::Deserialize;
 use std::{
     collections::VecDeque,
-    fs::File,
     io::Cursor,
     path::Path,
     process::{Child, Command},
@@ -16,16 +18,15 @@ use std::{
     thread::{self},
 };
 use webrtc_vad::Vad;
-use whisper_rs::{
-    DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
-    WhisperError,
-};
+use whisper_rs::WhisperContext;
+
+use crate::util::resample;
 
 // Configuration struct
 #[derive(Deserialize, Clone, Debug)]
 struct Config {
     audio: AudioConfig,
-    whisper: WhisperConfig,
+    whisper: whisper::WhisperConfig,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -34,75 +35,9 @@ struct AudioConfig {
     output_ports: Vec<String>,
 }
 
-#[derive(Deserialize, Clone, Debug)]
-struct WhisperConfig {
-    model: String,
-    language: Option<String>, // TODO: See if language can be validated during parsing
-    translate: bool,
-    no_context: bool,
-    single_segment: bool, // TODO: Look into hardcoding this to simplify programming
-    print_realtime: bool, // TODO: Probably hardcode this
-    print_progress: bool, // TODO: Probably hardcode this
-}
-
 enum ProcessUnit {
     Continue(Vec<f32>),
     Quit,
-}
-
-fn resample(
-    samples: Vec<f32>,
-    from: usize,
-    to: usize,
-) -> Result<Vec<f32>, speexdsp_resampler::Error> {
-    // Create resampler
-    // TODO: Figure out putpose of quality param
-    let mut resampler = speexdsp_resampler::State::new(1, from, to, 4)?;
-
-    // Output buffer
-    // TODO: See if filling the buffer in necessary
-    // TODO: Find out what the + 512 is for
-    let mut resampled =
-        vec![0.0; ((samples.len() as f64 * to as f64 / from as f64).ceil() as usize) + 512];
-
-    // Downsample
-    // TODO: Figure out what index is for
-    resampler.process_float(0, &samples, &mut resampled)?;
-
-    Ok(resampled)
-}
-
-// Send audio to whisper for transcribing
-fn transcribe(config: &Config, ctx: &WhisperContext, samples: Vec<f32>) -> String {
-    let resampled = resample(samples, 48000, 16000).unwrap();
-
-    // Whisper parameters
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_language(config.whisper.language.as_deref());
-    params.set_translate(config.whisper.translate);
-    params.set_no_context(config.whisper.no_context);
-    params.set_single_segment(config.whisper.single_segment);
-    params.set_print_realtime(config.whisper.print_realtime);
-    params.set_print_progress(config.whisper.print_progress);
-
-    // Create whisper state
-    let mut state = ctx.create_state().unwrap();
-    // Transcribe
-    state.full(params, &resampled).unwrap();
-
-    // Get number of output segments
-    let n_segments = state.full_n_segments().unwrap();
-    // Create empty result string to fill
-    let mut result = String::new();
-
-    // Loop through segments
-    for i in 0..n_segments {
-        // Add each segment to the result string
-        result.push_str(state.full_get_segment_text(i).unwrap().as_str());
-    }
-
-    // Return result
-    result
 }
 
 fn translate_and_play(
@@ -112,7 +47,7 @@ fn translate_and_play(
     samples: Vec<f32>,
 ) {
     // Transcribe
-    let result = transcribe(config, ctx, samples.clone());
+    let result = whisper::transcribe(&config.whisper, ctx, samples.clone());
 
     // Discard empty results
     if result.trim().is_empty() {
@@ -153,51 +88,6 @@ fn translate_and_play(
     let mut play_buffer = play_buffer.lock().unwrap();
     // Add resulting TTS audio to the play buffer
     play_buffer.append(&mut Into::<VecDeque<_>>::into(resampled));
-}
-
-// Load whisper
-fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, WhisperError> {
-    // Get relative path
-    let model_path = format!("whisper/ggml-{}.bin", config.model);
-
-    // Ensure whisper directory exists
-    // TODO: Improve error handling
-    let _ = std::fs::create_dir("whisper");
-
-    // Check model exists
-    if !std::fs::exists(&model_path).unwrap() {
-        warn!("Model {} not found, attempting to download", model_path);
-
-        // Construct url
-        // TODO: Maybe make this configurable
-        let url = format!(
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin?download=true",
-            config.model
-        );
-
-        // Create model file
-        let mut model_file = File::create(&model_path).unwrap();
-
-        // Download model file
-        // TODO: Add a progress bar
-        let mut download = reqwest::blocking::get(url).unwrap();
-
-        // Copy contents
-        std::io::copy(&mut download, &mut model_file).unwrap();
-
-        info!("Model {} downloaded", config.model);
-    }
-
-    // Create the context and load the model
-    WhisperContext::new_with_params(
-        &model_path,
-        WhisperContextParameters {
-            use_gpu: true,
-            flash_attn: false,
-            gpu_device: 0,
-            dtw_parameters: DtwParameters::default(),
-        },
-    )
 }
 
 // Make sure dependencies are installed and start piper
@@ -333,7 +223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     whisper_rs::install_logging_hooks();
 
     // Load whisper
-    let whisper_ctx = setup_whisper(config.whisper.clone()).unwrap();
+    let whisper_ctx = whisper::setup_whisper(config.whisper.clone()).unwrap();
 
     // Start TTS server
     let mut piper = setup_piper();
