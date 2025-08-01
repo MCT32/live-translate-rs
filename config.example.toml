@@ -10,3 +10,4 @@ model="large-v2"
 language = "de"
 translate = true
 no_context = false
+silence_length = 10

@@ -86,6 +86,7 @@ pub struct WhisperConfig {
     pub language: Option<String>,
     pub translate: bool,
     pub no_context: bool,
+    pub silence_length: u32, // Silence length in multiples of 21.3333ms
 }
 
 // Load whisper

@@ -85,8 +85,7 @@ fn process_audio(
                     }
 
                     // If there has been enough silence
-                    // TODO: Make duration configurable
-                    if silence >= 10 {
+                    if silence >= config.whisper.silence_length {
                         // Finish recording
                         info!("Recording finished");
                         recording = false;
