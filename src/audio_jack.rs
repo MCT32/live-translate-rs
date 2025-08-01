@@ -69,7 +69,6 @@ pub fn setup_jack(
     }
 
     // Jack client callback
-    // TODO: Improve error handling
     let process = jack::contrib::ClosureProcessHandler::new(
         move |_: &Client, ps: &ProcessScope| -> jack::Control {
             // Get audio from input
