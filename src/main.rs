@@ -1,9 +1,9 @@
+mod audio_jack;
 mod piper;
 mod util;
 mod whisper;
 
-use jack::*;
-use log::{info, warn};
+use log::info;
 use serde::Deserialize;
 use std::{
     collections::VecDeque,
@@ -22,14 +22,8 @@ use crate::piper::play_tts;
 // Configuration struct
 #[derive(Deserialize, Clone, Debug)]
 struct Config {
-    audio: AudioConfig,
+    audio_jack: audio_jack::AudioJackConfig,
     whisper: whisper::WhisperConfig,
-}
-
-#[derive(Deserialize, Clone, Debug)]
-struct AudioConfig {
-    input_port: String,
-    output_ports: Vec<String>,
 }
 
 enum ProcessUnit {
@@ -137,57 +131,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start TTS server
     let mut piper = piper::setup_piper();
 
-    // Initialise jack client
-    let (client, _status) =
-        Client::new("rust_jack_client", ClientOptions::NO_START_SERVER).unwrap();
-
-    // Register input port
-    let in_port = client
-        .register_port("input_MONO", AudioIn::default())
-        .unwrap();
-    // Connect input
-    client
-        .connect_ports_by_name(&config.audio.input_port, in_port.name().unwrap().as_str())
-        .unwrap();
-
-    // Regsiter output port
-    let mut out_port = client
-        .register_port("output_MONO", AudioOut::default())
-        .unwrap();
-
-    // List of connections before program
-    let mut temp_disconnected: Vec<String> = vec![];
-
-    // Connect output
-    // TODO: Probably don't need to clone here
-    for port in config.audio.output_ports.clone() {
-        if let Some(port) = client.port_by_name(&port) {
-            // Connect output to port
-            // TODO: Error handling
-            client
-                .connect_ports(&out_port, &port)
-                .expect("Couldnt connect ports");
-
-            // Check for microphone connection
-            if port.is_connected_to(&config.audio.input_port).unwrap() {
-                info!(
-                    "Port {} connected to input, temporarily disconnecting",
-                    port.name().unwrap()
-                );
-
-                // Add to list
-                temp_disconnected.push(port.name().unwrap());
-
-                // Disconnect ports
-                client
-                    .disconnect_ports_by_name(&config.audio.input_port, &port.name().unwrap())
-                    .unwrap();
-            }
-        } else {
-            warn!("Port {} doesn't exist!", port);
-        }
-    }
-
     // Channel for sending audio from jack thread to processing thread
     let (audio_tx, audio_rx) = std::sync::mpsc::channel::<ProcessUnit>();
 
@@ -208,38 +151,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Clone for use in closure
     let audio_tx_cloned = audio_tx.clone();
 
-    // Jack client callback
-    let process = jack::contrib::ClosureProcessHandler::new(
-        move |_: &Client, ps: &ProcessScope| -> jack::Control {
-            // Get audio from input
-            let in_buf = in_port.as_slice(ps);
-
-            audio_tx_cloned
-                .send(ProcessUnit::Continue(in_buf.to_vec()))
-                .unwrap();
-
-            // Create buffer to write sound output
-            let out_buf = out_port.as_mut_slice(ps);
-
-            {
-                // Lock the play buffer
-                let mut play_buffer = play_buffer.lock().unwrap();
-
-                // Iterate through samples
-                // TODO: Try without iteration
-                for frame in out_buf.iter_mut() {
-                    // Pop sample from buffer if its available, otherwise output silence
-                    *frame = play_buffer.pop_front().unwrap_or(0.0);
-                }
-            }
-
-            // Tell jack to continue
-            jack::Control::Continue
-        },
-    );
-
-    // Start the client
-    let active_client = client.activate_async((), process).unwrap();
+    // Start jack client
+    let (temp_disconnected, active_client) =
+        audio_jack::setup_jack(&config.audio_jack, audio_tx_cloned, play_buffer);
 
     // Bool so that program can safely exit
     let running = Arc::new(AtomicBool::new(true));
@@ -266,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Reconnect disconnected ports
     for port in temp_disconnected {
         client
-            .connect_ports_by_name(&config.audio.input_port, &port)
+            .connect_ports_by_name(&config.audio_jack.input_port, &port)
             .unwrap();
     }
 
