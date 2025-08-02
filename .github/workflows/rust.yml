@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install jack
+      run: sudo apt install -y jack
     - name: Build
       run: cargo build --verbose
     - name: Run tests
