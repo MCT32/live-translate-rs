@@ -144,7 +144,7 @@ pub fn transcribe(
     ctx: &WhisperContext,
     samples: Vec<f32>,
 ) -> Result<Option<String>, ErrTranscribe> {
-    let resampled = resample(samples, 48000, 16000)?;
+    let mut resampled = resample(samples, 48000, 16000)?;
 
     // Whisper parameters
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
@@ -157,8 +157,13 @@ pub fn transcribe(
 
     // Create whisper state
     let mut state = ctx.create_state()?;
+
+    // Make sure audio is at least 1 second
+    if resampled.len() < 48000 {
+        resampled.resize(48000, 0.0);
+    }
+
     // Transcribe
-    // TODO: Pad recordings that are too short
     state.full(params, &resampled)?;
 
     // Get number of output segments
