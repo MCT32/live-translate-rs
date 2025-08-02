@@ -16,8 +16,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Install jack
-      run: sudo apt install -y jack
+    - name: Install JACK
+      run: |
+        sudo apt update
+        sudo apt install -y libjack-jackd2-dev jackd2
     - name: Build
       run: cargo build --verbose
     - name: Run tests
