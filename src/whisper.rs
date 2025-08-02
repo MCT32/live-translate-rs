@@ -120,7 +120,6 @@ pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, ErrSetupWh
         let mut model_file = std::fs::File::create(&model_path)?;
 
         // Download model file
-        // TODO: Add a progress bar
         let mut download = match reqwest::blocking::get(url) {
             Ok(download) => download,
             Err(err) => {

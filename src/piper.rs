@@ -119,7 +119,6 @@ fn run_command_with_log(command: &mut Command) -> Result<Child, std::io::Error> 
 }
 
 // Make sure dependencies are installed and start piper
-// TODO: Make some optional params configurable
 pub fn setup_piper(config: &PiperConfig) -> Result<Child, ErrSetupPiper> {
     // Virtual environment
     const ENV_PATH: &str = "./env";
