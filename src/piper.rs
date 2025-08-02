@@ -18,6 +18,7 @@ pub enum ErrSetupPiper {
     IoError(std::io::Error),
     CouldNotCreateEnv,
     CouldNotInstallDeps,
+    CouldNotDownloadModel,
 }
 
 impl Display for ErrSetupPiper {
@@ -28,6 +29,7 @@ impl Display for ErrSetupPiper {
                 write!(f, "Could not create python virtual environment for piper")
             }
             Self::CouldNotInstallDeps => write!(f, "Could not install python dependencies"),
+            Self::CouldNotDownloadModel => write!(f, "Could not download piper model!"),
         }
     }
 }
@@ -122,7 +124,6 @@ pub fn setup_piper(config: &PiperConfig) -> Result<Child, ErrSetupPiper> {
     // Virtual environment
     const ENV_PATH: &str = "./env";
 
-    // TODO: Handle model downloading
     // Create virtual environment of it doesn't already exist
     if !Path::new(ENV_PATH).exists() {
         warn!("Python virtual environment does not exist, creating now");
@@ -146,6 +147,22 @@ pub fn setup_piper(config: &PiperConfig) -> Result<Child, ErrSetupPiper> {
     if !status.success() {
         return Err(ErrSetupPiper::CouldNotInstallDeps);
     }
+
+    // Download missing model
+    if !std::fs::exists(format!("./{}.onnx", config.model))? {
+        warn!("Piper model not found, downloading now");
+
+        let status =
+            run_command_with_log(Command::new(format!("{}/bin/python", ENV_PATH)).args([
+                "-m",
+                "piper.download_voices",
+                &config.model,
+            ]))?
+            .wait()?;
+        if !status.success() {
+            return Err(ErrSetupPiper::CouldNotDownloadModel);
+        }
+    };
 
     // Run server
     let piper = run_command_with_log(Command::new(format!("{}/bin/python", ENV_PATH)).args([
