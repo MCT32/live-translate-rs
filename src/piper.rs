@@ -190,7 +190,6 @@ pub fn play_tts(play_buffer: Arc<Mutex<VecDeque<f32>>>, message: String) -> Resu
     let mut samples: Vec<f32> = vec![];
 
     // Loop through samples
-    // TODO: Handle different sample formats instead of hardcoding i16
     for sample in reader.samples::<i16>() {
         // Convert sample to floats and scale accordingly
         samples.push(sample? as f32 / i16::MAX as f32);
