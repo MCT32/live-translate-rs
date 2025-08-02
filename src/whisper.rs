@@ -14,6 +14,7 @@ pub enum ErrSetupWhisper {
     WhisperError(WhisperError),
     IoError(std::io::Error),
     ReqwestError(reqwest::Error),
+    CouldNotDownloadModel(reqwest::Error),
 }
 
 impl Display for ErrSetupWhisper {
@@ -22,6 +23,9 @@ impl Display for ErrSetupWhisper {
             Self::WhisperError(whisper_error) => write!(f, "{}", whisper_error),
             Self::IoError(io_error) => write!(f, "{}", io_error),
             Self::ReqwestError(reqwest_error) => write!(f, "{}", reqwest_error),
+            Self::CouldNotDownloadModel(error) => {
+                write!(f, "Could not download whisper model!\n{}", error)
+            }
         }
     }
 }
@@ -117,8 +121,12 @@ pub fn setup_whisper(config: WhisperConfig) -> Result<WhisperContext, ErrSetupWh
 
         // Download model file
         // TODO: Add a progress bar
-        // TODO: Customise error type to explain model download
-        let mut download = reqwest::blocking::get(url)?;
+        let mut download = match reqwest::blocking::get(url) {
+            Ok(download) => download,
+            Err(err) => {
+                return Err(ErrSetupWhisper::CouldNotDownloadModel(err));
+            }
+        };
 
         // Copy contents
         std::io::copy(&mut download, &mut model_file)?;
