@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - uses: Jimver/cuda-toolkit@v0.2.24
+      id: cuda-toolkit
     - name: Install JACK
       run: |
         sudo apt update
