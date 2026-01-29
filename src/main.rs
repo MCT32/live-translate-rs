@@ -2,7 +2,9 @@ mod audio_jack;
 mod piper;
 mod util;
 mod whisper;
+mod config;
 
+use device_query::{DeviceQuery, DeviceState};
 use log::{error, info};
 use serde::Deserialize;
 use std::{
@@ -24,6 +26,7 @@ use crate::piper::play_tts;
 // Configuration struct
 #[derive(Deserialize, Clone, Debug)]
 struct Config {
+    general: config::GeneralConfig,
     audio_jack: audio_jack::AudioJackConfig,
     whisper: whisper::WhisperConfig,
     piper: piper::PiperConfig,
@@ -60,14 +63,18 @@ fn process_audio(
                 // Truncate to correct size
                 samples_int.truncate(960);
 
-                // Detect voice activity
-                let is_voice = match vad.is_voice_segment(&samples_int) {
-                    Ok(is_voice) => is_voice,
-                    Err(_) => {
-                        // No error returned >:(
-                        // https://github.com/kaegi/webrtc-vad/issues/9
-                        error!("VAD could not evaluate if the audio was voice!");
-                        continue;
+                let is_voice = if config.general.push_to_talk {
+                    DeviceState::new().get_keys().contains(&config.general.ptt_key)
+                } else {
+                    // Detect voice activity
+                    match vad.is_voice_segment(&samples_int) {
+                        Ok(is_voice) => is_voice,
+                        Err(_) => {
+                            // No error returned >:(
+                            // https://github.com/kaegi/webrtc-vad/issues/9
+                            error!("VAD could not evaluate if the audio was voice!");
+                            continue;
+                        }
                     }
                 };
 

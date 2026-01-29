@@ -1,3 +1,7 @@
+[general]
+push_to_talk = false
+ptt_key = "Delete"
+
 [audio_jack]
 input_port = "Noise Canceling source:capture_MONO"
 output_ports = [

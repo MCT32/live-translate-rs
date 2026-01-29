@@ -4,8 +4,7 @@ use std::{
 };
 
 use jack::{
-    AsyncClient, AudioIn, AudioOut, Client, ClientOptions, Control, ProcessScope,
-    contrib::ClosureProcessHandler,
+    AsyncClient, AudioIn, AudioOut, Client, ClientOptions, Control, ProcessScope, contrib::ClosureProcessHandler
 };
 use log::{error, info, warn};
 use serde::Deserialize;

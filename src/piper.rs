@@ -128,7 +128,7 @@ pub fn setup_piper(config: &PiperConfig) -> Result<Child, ErrSetupPiper> {
         warn!("Python virtual environment does not exist, creating now");
 
         let status =
-            run_command_with_log(Command::new("python3").args(["-m", "venv", ENV_PATH]))?.wait()?;
+            run_command_with_log(Command::new("python3.11").args(["-m", "venv", ENV_PATH]))?.wait()?;
         if !status.success() {
             return Err(ErrSetupPiper::CouldNotCreateEnv);
         }
