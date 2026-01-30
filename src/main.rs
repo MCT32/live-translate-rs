@@ -1,8 +1,8 @@
-mod audio_jack;
+mod config;
 mod piper;
+mod sound;
 mod util;
 mod whisper;
-mod config;
 
 use device_query::{DeviceQuery, DeviceState};
 use log::{error, info};
@@ -19,7 +19,10 @@ use std::{
 use webrtc_vad::Vad;
 use whisper_rs::WhisperContext;
 
-use crate::piper::play_tts;
+use crate::{
+    piper::play_tts,
+    sound::{AudioClient, AudioClientType, AudioConfig, audio_jack::JackClient},
+};
 
 // TODO: Add tests
 
@@ -27,7 +30,7 @@ use crate::piper::play_tts;
 #[derive(Deserialize, Clone, Debug)]
 struct Config {
     general: config::GeneralConfig,
-    audio_jack: audio_jack::AudioJackConfig,
+    audio: AudioConfig,
     whisper: whisper::WhisperConfig,
     piper: piper::PiperConfig,
 }
@@ -64,7 +67,9 @@ fn process_audio(
                 samples_int.truncate(960);
 
                 let is_voice = if config.general.push_to_talk {
-                    DeviceState::new().get_keys().contains(&config.general.ptt_key)
+                    DeviceState::new()
+                        .get_keys()
+                        .contains(&config.general.ptt_key)
                 } else {
                     // Detect voice activity
                     match vad.is_voice_segment(&samples_int) {
@@ -198,16 +203,20 @@ fn main() {
 
     // Clone for use in closure
     let audio_tx_cloned = audio_tx.clone();
+    let play_buffer_cloned = play_buffer.clone();
 
-    // Start jack client
-    let (temp_disconnected, active_client) =
-        match audio_jack::setup_jack(&config.audio_jack, audio_tx_cloned, play_buffer) {
-            Ok(client) => client,
-            Err(err) => {
-                error!("Could not set up jack client!\n{}", err);
-                return;
-            }
-        };
+    let audio_client_type = &config.general.audio_client;
+
+    // Create audio client
+    // TODO: Try to fit this into its own function
+    let mut audio_client = match audio_client_type {
+        AudioClientType::Jack => JackClient::new(&config.audio.jack.clone().unwrap()).unwrap(),
+    };
+
+    // Start audio client
+    audio_client
+        .start(audio_tx_cloned, play_buffer_cloned)
+        .unwrap();
 
     // Bool so that program can safely exit
     let running = Arc::new(AtomicBool::new(true));
@@ -237,24 +246,8 @@ fn main() {
         error!("Could not join audio processing thread!");
     };
 
-    // Stop jack client
-    let (client, _, _) = match active_client.deactivate() {
-        Ok(client) => client,
-        Err(err) => {
-            error!("Could not deactivate jack client!\n{}", err);
-            return;
-        }
-    };
-
-    // Reconnect disconnected ports
-    for port in temp_disconnected {
-        if let Err(err) = client.connect_ports_by_name(&config.audio_jack.input_port, &port) {
-            error!(
-                "Could not reconnect port {} to {}!\n{}",
-                &config.audio_jack.input_port, &port, err
-            );
-        }
-    }
+    // Kill audio client
+    audio_client.stop();
 
     // Kill TTS
     if let Err(err) = piper.kill() {

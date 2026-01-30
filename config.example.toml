@@ -1,8 +1,9 @@
 [general]
 push_to_talk = false
 ptt_key = "Delete"
+audio_client = "Jack"
 
-[audio_jack]
+[audio.jack]
 input_port = "Noise Canceling source:capture_MONO"
 output_ports = [
     "PCM2902 Audio Codec Analog Stereo:playback_FL",
